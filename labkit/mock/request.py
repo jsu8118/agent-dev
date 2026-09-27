@@ -220,6 +220,45 @@ class MockRequest:
     def assistant_turns(self) -> int:
         return sum(1 for m in self.messages if m.get("role") == "assistant")
 
+    @cached_property
+    def documents(self) -> list[dict]:
+        """Document / search_result blocks in user turns, in API order (document_index / search_result_index).
+
+        Each item: {"index", "kind", "title", "text", "citations", "source"}.  Text-source documents cite by
+        character range; custom-content documents and search results cite by content block.
+        """
+        docs: list[dict] = []
+        counters = {"document": 0, "search_result": 0}
+
+        def add(block: dict) -> None:
+            kind = block.get("type")
+            if kind == "document":
+                source = block.get("source") or {}
+                if source.get("type") == "text":
+                    text = source.get("data", "")
+                elif source.get("type") == "content":
+                    text = "\n".join(b.get("text", "") for b in source.get("content") or [] if isinstance(b, dict))
+                else:
+                    text = ""
+            else:
+                text = "\n".join(b.get("text", "") for b in block.get("content") or [] if isinstance(b, dict))
+            docs.append({"index": counters[kind], "kind": kind, "title": block.get("title"), "text": text,
+                         "citations": bool((block.get("citations") or {}).get("enabled")),
+                         "source": block.get("source") if kind == "search_result" else (block.get("source") or {})})
+            counters[kind] += 1
+
+        for m in self.messages:
+            if m.get("role") != "user":
+                continue
+            for b in _blocks(m.get("content")):
+                if b.get("type") in ("document", "search_result"):
+                    add(b)
+                elif b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+                    for sub in b["content"]:
+                        if isinstance(sub, dict) and sub.get("type") == "search_result":
+                            add(sub)
+        return docs
+
     def search(self, pattern: str, text: str | None = None, flags: int = re.IGNORECASE) -> re.Match | None:
         return re.search(pattern, self.conversation_text if text is None else text, flags)
 

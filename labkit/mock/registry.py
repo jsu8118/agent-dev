@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import sys
 import threading
 from dataclasses import dataclass
 from typing import Callable
@@ -59,7 +60,11 @@ def load_scenarios() -> None:
             return
         from . import scenarios as package
         for module in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
-            importlib.import_module(f"{package.__name__}.{module.name}")
+            try:
+                importlib.import_module(f"{package.__name__}.{module.name}")
+            except Exception as exc:  # one broken scenario file must not take down every other lab
+                print(f"[labkit] WARNING: could not load mock scenario module {module.name!r}: {exc!r}",
+                      file=sys.stderr)
         _loaded = True
 
 

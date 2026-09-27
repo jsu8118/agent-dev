@@ -56,3 +56,28 @@ def json_reply(obj: Any, *, thinking: str | None = None, complexity: float = 0.3
 def refuse(category: str | None = "cyber", explanation: str | None = None) -> Reply:
     return Reply(content=[], stop_reason="refusal",
                  stop_details={"type": "refusal", "category": category, "explanation": explanation})
+
+
+def cite(doc: dict, quote: str) -> dict:
+    """A citation object pointing at `quote` inside a document from `MockRequest.documents`.
+
+    Mirrors the API: plain-text documents -> char_location; search results -> search_result_location;
+    other documents -> content_block_location.
+    """
+    text = doc["text"]
+    if doc["kind"] == "search_result":
+        return {"type": "search_result_location", "cited_text": quote, "search_result_index": doc["index"],
+                "source": doc.get("source") or "", "title": doc.get("title"), "start_block_index": 0,
+                "end_block_index": 1}
+    source_type = (doc.get("source") or {}).get("type")
+    if source_type == "text":
+        start = max(text.find(quote), 0)
+        return {"type": "char_location", "cited_text": quote, "document_index": doc["index"],
+                "document_title": doc.get("title"), "start_char_index": start, "end_char_index": start + len(quote)}
+    return {"type": "content_block_location", "cited_text": quote, "document_index": doc["index"],
+            "document_title": doc.get("title"), "start_block_index": 0, "end_block_index": 1}
+
+
+def cited_text(text: str, citations: list[dict]) -> dict:
+    """A text content block carrying citations (use inside Reply(content=[...]))."""
+    return {"type": "text", "text": text, "citations": citations}

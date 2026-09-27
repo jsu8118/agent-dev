@@ -84,7 +84,7 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
                 if cost > budget:
                     text = text[: max(0, int(budget * CHARS_PER_TOKEN))]
                     cost, stop_reason = budget, "max_tokens"
-                content.append({"type": "text", "text": text})
+                content.append({**{k: v for k, v in block.items() if k != "text"}, "text": text})
                 output_tokens += cost
                 budget -= cost
                 if stop_reason == "stop_sequence":
@@ -153,11 +153,16 @@ def to_sse(message: dict) -> bytes:
     for index, block in enumerate(message["content"]):
         kind = block["type"]
         if kind == "text":
-            emit("content_block_start", {"type": "content_block_start", "index": index,
-                                         "content_block": {"type": "text", "text": ""}})
+            start_block = {"type": "text", "text": ""}
+            if block.get("citations") is not None:
+                start_block["citations"] = []
+            emit("content_block_start", {"type": "content_block_start", "index": index, "content_block": start_block})
             for piece in _chunks(block["text"]):
                 emit("content_block_delta", {"type": "content_block_delta", "index": index,
                                              "delta": {"type": "text_delta", "text": piece}})
+            for citation in block.get("citations") or []:
+                emit("content_block_delta", {"type": "content_block_delta", "index": index,
+                                             "delta": {"type": "citations_delta", "citation": citation}})
         elif kind == "thinking":
             emit("content_block_start", {"type": "content_block_start", "index": index,
                                          "content_block": {"type": "thinking", "thinking": "", "signature": ""}})
