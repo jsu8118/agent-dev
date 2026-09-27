@@ -1,0 +1,32 @@
+# Convenience services for the course. Examples:
+#   docker compose build
+#   docker compose run --rm tests                 # full test suite, mock mode
+#   docker compose run --rm course bash           # a shell with everything installed (repo mounted at /course)
+#   docker compose up mock-api                    # the offline mock Claude API on http://localhost:8765
+services:
+  course:
+    build: .
+    image: claude-agent-course
+    working_dir: /course
+    volumes:
+      - ./:/course
+    env_file:
+      - path: .env
+        required: false
+    stdin_open: true
+    tty: true
+    command: bash
+
+  tests:
+    image: claude-agent-course
+    build: .
+    environment:
+      LABKIT_MODE: mock
+    command: python -m pytest -q
+
+  mock-api:
+    image: claude-agent-course
+    build: .
+    command: python -m labkit.mock.server --host 0.0.0.0 --port 8765
+    ports:
+      - "8765:8765"

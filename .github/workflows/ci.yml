@@ -1,0 +1,28 @@
+name: course-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  mock-mode-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LABKIT_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Dataset is reproducible
+        # The SQLite file's bytes can differ between SQLite versions, so it is excluded from the diff;
+        # its content is covered by the tests.
+        run: |
+          python data/generate_data.py
+          git diff --exit-code -- data ':(exclude)data/kestrel_ops.db'
+      - name: Tests (every lab and solution, in mock mode)
+        run: python -m pytest -q
