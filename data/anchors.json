@@ -1,0 +1,803 @@
+{
+  "as_of": "2026-09-15",
+  "anchors": {
+    "warranty_expired": {
+      "order_id": "SO-10001",
+      "customer_id": "C-1015",
+      "po": "EPD-0528",
+      "total": 2450.0,
+      "promised": "2024-06-12",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-100-S",
+          1,
+          2450.0,
+          2450.0
+        ]
+      ],
+      "shipment_id": "SH-50001",
+      "tracking": "NLF5305938317",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2024-06-10",
+      "eta": "2024-06-13",
+      "delivered": "2024-06-13",
+      "invoice_id": "AR-90001",
+      "invoice_amount": 2450.0,
+      "invoice_due": "2024-07-10",
+      "invoice_status": "paid",
+      "invoice_paid": 2450.0,
+      "serials": {
+        "KP-100-S": [
+          "KP100-2406-0001"
+        ]
+      }
+    },
+    "critical_pumps": {
+      "order_id": "SO-10002",
+      "customer_id": "C-1019",
+      "po": "GBWD-2025-190",
+      "total": 45080.0,
+      "promised": "2025-12-08",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-400-S",
+          2,
+          22540.0,
+          45080.0
+        ]
+      ],
+      "shipment_id": "SH-50002",
+      "tracking": "NLF1972237794",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2025-12-05",
+      "eta": "2025-12-10",
+      "delivered": "2025-12-10",
+      "invoice_id": "AR-90002",
+      "invoice_amount": 45080.0,
+      "invoice_due": "2026-01-04",
+      "invoice_status": "paid",
+      "invoice_paid": 45080.0,
+      "serials": {
+        "KP-400-S": [
+          "KP400-2512-0001",
+          "KP400-2512-0002"
+        ]
+      }
+    },
+    "warranty_dry_run": {
+      "order_id": "SO-10003",
+      "customer_id": "C-1023",
+      "po": "CCD-1027",
+      "total": 5850.0,
+      "promised": "2025-11-05",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-100-S",
+          1,
+          2450.0,
+          2450.0
+        ],
+        [
+          "KC-1",
+          1,
+          3400.0,
+          3400.0
+        ]
+      ],
+      "shipment_id": "SH-50003",
+      "tracking": "NLF8371246991",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2025-11-03",
+      "eta": "2025-11-06",
+      "delivered": "2025-11-06",
+      "invoice_id": "AR-90003",
+      "invoice_amount": 5850.0,
+      "invoice_due": "2025-12-03",
+      "invoice_status": "paid",
+      "invoice_paid": 5850.0,
+      "serials": {
+        "KP-100-S": [
+          "KP100-2510-0001"
+        ],
+        "KC-1": [
+          "KC1-2510-0001"
+        ]
+      }
+    },
+    "vibration_pump": {
+      "order_id": "SO-10014",
+      "customer_id": "C-1022",
+      "po": "TOE-26-004",
+      "total": 22540.0,
+      "promised": "2026-02-27",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-400-S",
+          1,
+          22540.0,
+          22540.0
+        ]
+      ],
+      "shipment_id": "SH-50014",
+      "tracking": "BRL8107534831",
+      "carrier": "BlueRiver Logistics",
+      "ship_date": "2026-02-23",
+      "eta": "2026-03-02",
+      "delivered": "2026-03-02",
+      "invoice_id": "AR-90014",
+      "invoice_amount": 22540.0,
+      "invoice_due": "2026-03-25",
+      "invoice_status": "paid",
+      "invoice_paid": 22540.0,
+      "serials": {
+        "KP-400-S": [
+          "KP400-2602-0001"
+        ]
+      }
+    },
+    "hazard_pump": {
+      "order_id": "SO-10118",
+      "customer_id": "C-1002",
+      "po": "CCW-26-0402",
+      "total": 21620.0,
+      "promised": "2026-05-18",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-250-X",
+          2,
+          10810.0,
+          21620.0
+        ]
+      ],
+      "shipment_id": "SH-50116",
+      "tracking": "NLF4961951252",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-05-15",
+      "eta": "2026-05-20",
+      "delivered": "2026-05-20",
+      "invoice_id": "AR-90116",
+      "invoice_amount": 21620.0,
+      "invoice_due": "2026-06-14",
+      "invoice_status": "paid",
+      "invoice_paid": 21620.0,
+      "serials": {
+        "KP-250-X": [
+          "KP250-2605-0001",
+          "KP250-2605-0002"
+        ]
+      }
+    },
+    "billing_overdue": {
+      "order_id": "SO-10203",
+      "customer_id": "C-1019",
+      "po": "GBWD-2026-061",
+      "total": 4489.6,
+      "promised": "2026-07-01",
+      "status": "delivered",
+      "lines": [
+        [
+          "MS-400",
+          4,
+          901.6,
+          3606.4
+        ],
+        [
+          "BRG-6312",
+          8,
+          110.4,
+          883.2
+        ]
+      ],
+      "shipment_id": "SH-50198",
+      "tracking": "SWP6679316007",
+      "carrier": "SwiftParcel",
+      "ship_date": "2026-06-29",
+      "eta": "2026-07-01",
+      "delivered": "2026-07-01",
+      "invoice_id": "AR-90198",
+      "invoice_amount": 4489.6,
+      "invoice_due": "2026-07-29",
+      "invoice_status": "overdue",
+      "invoice_paid": 0.0
+    },
+    "refund_manager": {
+      "order_id": "SO-10214",
+      "customer_id": "C-1014",
+      "po": "MOS-55120",
+      "total": 10810.0,
+      "promised": "2026-08-07",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-250-X",
+          1,
+          10810.0,
+          10810.0
+        ]
+      ],
+      "shipment_id": "SH-50209",
+      "tracking": "NLF2404383062",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-06",
+      "eta": "2026-08-11",
+      "delivered": "2026-08-11",
+      "invoice_id": "AR-90209",
+      "invoice_amount": 10810.0,
+      "invoice_due": "2026-09-05",
+      "invoice_status": "paid",
+      "invoice_paid": 10810.0,
+      "rma_id": "RMA-7001",
+      "refund_due": 9188.5,
+      "serials": {
+        "KP-250-X": [
+          "KP250-2608-0001"
+        ]
+      }
+    },
+    "return_too_late": {
+      "order_id": "SO-10227",
+      "customer_id": "C-1008",
+      "po": "DPP-11902",
+      "total": 960.0,
+      "promised": "2026-07-17",
+      "status": "delivered",
+      "lines": [
+        [
+          "BRG-6312",
+          8,
+          120.0,
+          960.0
+        ]
+      ],
+      "shipment_id": "SH-50221",
+      "tracking": "SWP5837745902",
+      "carrier": "SwiftParcel",
+      "ship_date": "2026-07-14",
+      "eta": "2026-07-17",
+      "delivered": "2026-07-17",
+      "invoice_id": "AR-90221",
+      "invoice_amount": 960.0,
+      "invoice_due": "2026-08-13",
+      "invoice_status": "overdue",
+      "invoice_paid": 0.0
+    },
+    "warranty_ok": {
+      "order_id": "SO-10243",
+      "customer_id": "C-1001",
+      "po": "BMU-26-0718",
+      "total": 15664.0,
+      "promised": "2026-08-14",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-250-S",
+          2,
+          7832.0,
+          15664.0
+        ]
+      ],
+      "shipment_id": "SH-50233",
+      "tracking": "NLF6789865709",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-12",
+      "eta": "2026-08-14",
+      "delivered": "2026-08-14",
+      "invoice_id": "AR-90233",
+      "invoice_amount": 15664.0,
+      "invoice_due": "2026-09-11",
+      "invoice_status": "paid",
+      "invoice_paid": 15664.0,
+      "serials": {
+        "KP-250-S": [
+          "KP250-2608-0002",
+          "KP250-2608-0003"
+        ]
+      }
+    },
+    "field_seal_fail_1": {
+      "order_id": "SO-10248",
+      "customer_id": "C-1005",
+      "po": "HF-77102",
+      "total": 8188.0,
+      "promised": "2026-08-13",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-250-S",
+          1,
+          8188.0,
+          8188.0
+        ]
+      ],
+      "shipment_id": "SH-50237",
+      "tracking": "NLF9463425003",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-10",
+      "eta": "2026-08-13",
+      "delivered": "2026-08-13",
+      "invoice_id": "AR-90237",
+      "invoice_amount": 8188.0,
+      "invoice_due": "2026-09-09",
+      "invoice_status": "paid",
+      "invoice_paid": 8188.0,
+      "rma_id": "RMA-7002",
+      "refund_due": null,
+      "serials": {
+        "KP-250-S": [
+          "KP250-2608-0004"
+        ]
+      }
+    },
+    "billing_duplicate": {
+      "order_id": "SO-10252",
+      "customer_id": "C-1006",
+      "po": "NG-PO-99231",
+      "total": 4505.6,
+      "promised": "2026-08-07",
+      "status": "delivered",
+      "lines": [
+        [
+          "KV-50-F",
+          4,
+          1126.4,
+          4505.6
+        ]
+      ],
+      "shipment_id": "SH-50239",
+      "tracking": "NLF5248307496",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-05",
+      "eta": "2026-08-07",
+      "delivered": "2026-08-07",
+      "invoice_id": "AR-90239",
+      "invoice_amount": 4505.6,
+      "invoice_due": "2026-09-04",
+      "invoice_status": "paid",
+      "invoice_paid": 9011.2
+    },
+    "refund_director": {
+      "order_id": "SO-10253",
+      "customer_id": "C-1011",
+      "po": "PDP-7781",
+      "total": 21560.0,
+      "promised": "2026-09-18",
+      "status": "cancelled",
+      "lines": [
+        [
+          "KP-400-S",
+          1,
+          21560.0,
+          21560.0
+        ]
+      ],
+      "invoice_id": "AR-90240",
+      "invoice_amount": 21560.0,
+      "invoice_due": "2026-09-04",
+      "invoice_status": "paid",
+      "invoice_paid": 21560.0
+    },
+    "field_seal_fail_2": {
+      "order_id": "SO-10254",
+      "customer_id": "C-1016",
+      "po": "KMC-8790",
+      "total": 8900.0,
+      "promised": "2026-08-18",
+      "status": "delivered",
+      "lines": [
+        [
+          "KP-250-S",
+          1,
+          8900.0,
+          8900.0
+        ]
+      ],
+      "shipment_id": "SH-50240",
+      "tracking": "NLF6390804802",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-17",
+      "eta": "2026-08-19",
+      "delivered": "2026-08-19",
+      "invoice_id": "AR-90241",
+      "invoice_amount": 8900.0,
+      "invoice_due": "2026-09-16",
+      "invoice_status": "open",
+      "invoice_paid": 0.0,
+      "rma_id": "RMA-7003",
+      "refund_due": null,
+      "serials": {
+        "KP-250-S": [
+          "KP250-2608-0005"
+        ]
+      }
+    },
+    "configured_controller": {
+      "order_id": "SO-10257",
+      "customer_id": "C-1012",
+      "po": "LDC-PO-3390",
+      "total": 9568.0,
+      "promised": "2026-08-19",
+      "status": "delivered",
+      "lines": [
+        [
+          "KC-2",
+          2,
+          4784.0,
+          9568.0
+        ]
+      ],
+      "shipment_id": "SH-50243",
+      "tracking": "SWP4541529898",
+      "carrier": "SwiftParcel",
+      "ship_date": "2026-08-14",
+      "eta": "2026-08-18",
+      "delivered": "2026-08-18",
+      "invoice_id": "AR-90244",
+      "invoice_amount": 9568.0,
+      "invoice_due": "2026-09-13",
+      "invoice_status": "overdue",
+      "invoice_paid": 0.0,
+      "serials": {
+        "KC-2": [
+          "KC2-2608-0001",
+          "KC2-2608-0002"
+        ]
+      }
+    },
+    "refund_small": {
+      "order_id": "SO-10263",
+      "customer_id": "C-1016",
+      "po": "KMC-8812",
+      "total": 780.0,
+      "promised": "2026-08-14",
+      "status": "delivered",
+      "lines": [
+        [
+          "FLT-SUC-100",
+          3,
+          260.0,
+          780.0
+        ]
+      ],
+      "shipment_id": "SH-50248",
+      "tracking": "SWP7637419124",
+      "carrier": "SwiftParcel",
+      "ship_date": "2026-08-12",
+      "eta": "2026-08-14",
+      "delivered": "2026-08-14",
+      "invoice_id": "AR-90249",
+      "invoice_amount": 780.0,
+      "invoice_due": "2026-09-11",
+      "invoice_status": "paid",
+      "invoice_paid": 780.0,
+      "rma_id": "RMA-7004",
+      "refund_due": 663.0
+    },
+    "cancelled": {
+      "order_id": "SO-10274",
+      "customer_id": "C-1021",
+      "po": "WHG-3102",
+      "total": 6800.0,
+      "promised": "2026-08-22",
+      "status": "cancelled",
+      "lines": [
+        [
+          "KC-1",
+          2,
+          3400.0,
+          6800.0
+        ]
+      ]
+    },
+    "late_customs": {
+      "order_id": "SO-10279",
+      "customer_id": "C-1007",
+      "po": "APM-PO-5531",
+      "total": 16376.0,
+      "promised": "2026-09-08",
+      "status": "shipped",
+      "lines": [
+        [
+          "KP-250-S",
+          2,
+          8188.0,
+          16376.0
+        ]
+      ],
+      "shipment_id": "SH-50262",
+      "tracking": "BRL4617444347",
+      "carrier": "BlueRiver Logistics",
+      "ship_date": "2026-09-02",
+      "eta": "2026-09-09",
+      "delivered": null,
+      "invoice_id": "AR-90263",
+      "invoice_amount": 16376.0,
+      "invoice_due": "2026-10-02",
+      "invoice_status": "open",
+      "invoice_paid": 0.0,
+      "serials": {
+        "KP-250-S": [
+          "KP250-2608-0009",
+          "KP250-2608-0010"
+        ]
+      }
+    },
+    "spanish_delivered": {
+      "order_id": "SO-10280",
+      "customer_id": "C-1017",
+      "po": "SLT-0820",
+      "total": 5505.0,
+      "promised": "2026-09-01",
+      "status": "delivered",
+      "lines": [
+        [
+          "KV-20-B",
+          10,
+          294.5,
+          2945.0
+        ],
+        [
+          "KV-50-F",
+          2,
+          1280.0,
+          2560.0
+        ]
+      ],
+      "shipment_id": "SH-50263",
+      "tracking": "BRL6305652151",
+      "carrier": "BlueRiver Logistics",
+      "ship_date": "2026-08-24",
+      "eta": "2026-09-01",
+      "delivered": "2026-09-01",
+      "invoice_id": "AR-90264",
+      "invoice_amount": 5505.0,
+      "invoice_due": "2026-09-23",
+      "invoice_status": "open",
+      "invoice_paid": 0.0
+    },
+    "return_ok": {
+      "order_id": "SO-10283",
+      "customer_id": "C-1005",
+      "po": "HF-77310",
+      "total": 5593.6,
+      "promised": "2026-08-29",
+      "status": "delivered",
+      "lines": [
+        [
+          "MS-250",
+          10,
+          559.36,
+          5593.6
+        ]
+      ],
+      "shipment_id": "SH-50266",
+      "tracking": "NLF2201912860",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-08-25",
+      "eta": "2026-08-28",
+      "delivered": "2026-08-28",
+      "invoice_id": "AR-90267",
+      "invoice_amount": 5593.6,
+      "invoice_due": "2026-09-24",
+      "invoice_status": "open",
+      "invoice_paid": 0.0
+    },
+    "in_production": {
+      "order_id": "SO-10285",
+      "customer_id": "C-1018",
+      "po": "PCS-4410",
+      "total": 24500.0,
+      "promised": "2026-10-12",
+      "status": "in_production",
+      "lines": [
+        [
+          "KP-400-S",
+          1,
+          24500.0,
+          24500.0
+        ]
+      ]
+    },
+    "late_weather": {
+      "order_id": "SO-10290",
+      "customer_id": "C-1003",
+      "po": "SRM-44871",
+      "total": 4994.68,
+      "promised": "2026-09-09",
+      "status": "shipped",
+      "lines": [
+        [
+          "MS-250",
+          6,
+          588.8,
+          3532.8
+        ],
+        [
+          "BRG-6309",
+          12,
+          74.29,
+          891.48
+        ],
+        [
+          "CPL-250",
+          2,
+          285.2,
+          570.4
+        ]
+      ],
+      "shipment_id": "SH-50271",
+      "tracking": "BRL4803670335",
+      "carrier": "BlueRiver Logistics",
+      "ship_date": "2026-09-03",
+      "eta": "2026-09-17",
+      "delivered": null,
+      "invoice_id": "AR-90272",
+      "invoice_amount": 4994.68,
+      "invoice_due": "2026-10-03",
+      "invoice_status": "open",
+      "invoice_paid": 0.0
+    },
+    "wrong_item": {
+      "order_id": "SO-10292",
+      "customer_id": "C-1010",
+      "po": "ISF-2026-0457",
+      "total": 4480.0,
+      "promised": "2026-09-11",
+      "status": "delivered",
+      "lines": [
+        [
+          "IMP-250-D",
+          2,
+          2240.0,
+          4480.0
+        ]
+      ],
+      "shipment_id": "SH-50273",
+      "tracking": "SWP2249313023",
+      "carrier": "SwiftParcel",
+      "ship_date": "2026-09-08",
+      "eta": "2026-09-10",
+      "delivered": "2026-09-10",
+      "invoice_id": "AR-90274",
+      "invoice_amount": 4480.0,
+      "invoice_due": "2026-10-08",
+      "invoice_status": "paid",
+      "invoice_paid": 4480.0
+    },
+    "damaged_transit": {
+      "order_id": "SO-10299",
+      "customer_id": "C-1009",
+      "po": "RB-0931",
+      "total": 3534.0,
+      "promised": "2026-09-11",
+      "status": "delivered",
+      "lines": [
+        [
+          "KV-20-B",
+          12,
+          294.5,
+          3534.0
+        ]
+      ],
+      "shipment_id": "SH-50280",
+      "tracking": "NLF8303167026",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-09-08",
+      "eta": "2026-09-11",
+      "delivered": "2026-09-11",
+      "invoice_id": "AR-90281",
+      "invoice_amount": 3534.0,
+      "invoice_due": "2026-10-08",
+      "invoice_status": "paid",
+      "invoice_paid": 3534.0
+    },
+    "shipped_tracking": {
+      "order_id": "SO-10300",
+      "customer_id": "C-1013",
+      "po": "CSL-7730",
+      "total": 4880.0,
+      "promised": "2026-09-16",
+      "status": "shipped",
+      "lines": [
+        [
+          "VS-10",
+          8,
+          420.0,
+          3360.0
+        ],
+        [
+          "PT-40",
+          4,
+          380.0,
+          1520.0
+        ]
+      ],
+      "shipment_id": "SH-50281",
+      "tracking": "BRL9358862827",
+      "carrier": "BlueRiver Logistics",
+      "ship_date": "2026-09-09",
+      "eta": "2026-09-16",
+      "delivered": null,
+      "invoice_id": "AR-90282",
+      "invoice_amount": 4880.0,
+      "invoice_due": "2026-10-09",
+      "invoice_status": "open",
+      "invoice_paid": 0.0
+    },
+    "in_transit_ontime": {
+      "order_id": "SO-10303",
+      "customer_id": "C-1004",
+      "po": "GV-2026-118",
+      "total": 7680.0,
+      "promised": "2026-09-17",
+      "status": "shipped",
+      "lines": [
+        [
+          "KV-50-F",
+          6,
+          1280.0,
+          7680.0
+        ]
+      ],
+      "shipment_id": "SH-50283",
+      "tracking": "NLF9028150109",
+      "carrier": "NorthLine Freight",
+      "ship_date": "2026-09-11",
+      "eta": "2026-09-16",
+      "delivered": null,
+      "invoice_id": "AR-90284",
+      "invoice_amount": 7680.0,
+      "invoice_due": "2026-10-11",
+      "invoice_status": "paid",
+      "invoice_paid": 7680.0
+    },
+    "pending_strategic": {
+      "order_id": "SO-10306",
+      "customer_id": "C-1020",
+      "po": "OSF-PO-12007",
+      "total": 52448.0,
+      "promised": "2026-09-22",
+      "status": "confirmed",
+      "lines": [
+        [
+          "KP-250-S",
+          4,
+          7832.0,
+          31328.0
+        ],
+        [
+          "KC-2",
+          4,
+          4576.0,
+          18304.0
+        ],
+        [
+          "SVC-INSTALL",
+          2,
+          1408.0,
+          2816.0
+        ]
+      ]
+    },
+    "address_change": {
+      "order_id": "SO-10312",
+      "customer_id": "C-1024",
+      "po": "VFP-2291",
+      "total": 5900.0,
+      "promised": "2026-09-18",
+      "status": "confirmed",
+      "lines": [
+        [
+          "KV-80-G",
+          2,
+          2950.0,
+          5900.0
+        ]
+      ]
+    }
+  }
+}

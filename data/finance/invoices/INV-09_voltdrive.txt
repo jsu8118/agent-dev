@@ -1,0 +1,11 @@
+*** VoltDrive Electronics ***    Tax ID on file
+--------------------------------------------------------------
+INV# VD-INV-40551      DATE 2026-09-03      YOUR PO: PO-4500150
+CUSTOMER: KESTREL PUMPS + CONTROLS (AP DEPT)
+--------------------------------------------------------------
+  PCB-KC2-MAIN     KC-2 main control board                   300 EA       212.00    63,600.00
+--------------------------------------------------------------
+SUB-TOTAL USD 63,600.00
+TAX 0.00
+AMOUNT DUE USD 63,600.00
+TERMS NET 60

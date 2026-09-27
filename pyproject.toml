@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-agent-course"
+version = "1.0.0"
+description = "Agent Development with Claude: a one-week, hands-on course for practitioners"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.8,<2",
+    "pydantic>=2.7,<3",
+    "jsonschema>=4.20",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2.2,<3"]
+agent-sdk = ["claude-agent-sdk>=0.2.160"]
+service = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["labkit*", "kestrel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

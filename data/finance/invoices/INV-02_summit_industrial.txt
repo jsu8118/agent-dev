@@ -1,0 +1,12 @@
+*** Summit Industrial Supply ***    Tax ID on file
+--------------------------------------------------------------
+INV# SIS-30419      DATE 2026-08-13      YOUR PO: PO-4500131
+CUSTOMER: KESTREL PUMPS + CONTROLS (AP DEPT)
+--------------------------------------------------------------
+  MRO-GLV-L        Nitrile gloves, size L (box of 100)        60 BOX       11.50       690.00
+  MRO-WIPE         Industrial wipes (case)                    25 CS        38.00       950.00
+--------------------------------------------------------------
+SUB-TOTAL USD 1,640.00
+TAX 131.20
+AMOUNT DUE USD 1,771.20
+TERMS NET 30

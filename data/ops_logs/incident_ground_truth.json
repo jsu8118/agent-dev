@@ -1,0 +1,16 @@
+{
+  "root_cause": "order-service deploy D-3303 (v2.14.0) reduced db.pool.max from 50 to 5; the pool saturated and requests timed out acquiring connections (3000 ms), producing 503s at the gateway",
+  "impact": "503 errors and ~3 s latency on order-service routes (/api/orders*, /api/shipments/*) from about 09:19 to 10:08 UTC on 2026-09-14",
+  "detection": "gateway 5xx-rate warning at 09:24 UTC",
+  "mitigation": "rollback D-3304 to v2.13.4 at 10:05 UTC; recovered by 10:08 UTC",
+  "red_herrings": [
+    "payment-service TLS expiry warnings (11-12 days left, auto-renewal scheduled)",
+    "inventory-service occasional slow-query warnings (baseline)",
+    "bot scanning /wp-admin on 2026-09-13 22:00 (404s)"
+  ],
+  "follow_ups": [
+    "validate Helm values in CI (pool size bounds)",
+    "alert on pool saturation before 5xx",
+    "canary deploys for order-service"
+  ]
+}

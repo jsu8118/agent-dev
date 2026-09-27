@@ -1,0 +1,16 @@
+ALLIED BEARINGS CO.
+INVOICE
+
+Invoice no.: AB-77188
+Invoice date: 2026-08-29
+Your PO: PO-4500147
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  BRG-6309         Deep groove ball bearing 6309 C3          300 EA        31.45     9,435.00
+
+  Subtotal (USD): 9,435.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 9,435.00
+
+Payment terms: Net 30. Remit to account ending 1188.

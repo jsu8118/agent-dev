@@ -1,0 +1,15 @@
+work_order_id,asset_id,date,type,description,parts_used,technician,downtime_hours
+WO-24011,GB-KP250-03,2025-09-14,PM,"Regrease bearings (15 g LUB-EP2 each), check alignment: OK",LUB-EP2 x1,R. Silva,1.0
+WO-24088,HF-KP250-03,2025-10-02,PM,Annual inspection; alignment within tolerance,,K. Osei,2.0
+WO-24130,CC-KP600-01,2025-11-19,CM,Replaced mechanical seal after leakage at DE seal,MS-400 x1,D. Petrov,7.5
+WO-24177,GB-KP400-01,2026-01-15,PM,Post-commissioning check at 500 h: realigned (0.07 mm offset corrected),,R. Silva,3.0
+WO-24210,HF-KP250-03,2026-02-11,PM,Regrease bearings 15 g each,LUB-EP2 x1,K. Osei,0.5
+WO-24261,CC-KP100-04,2026-03-05,CM,Replaced VS-10 vibration sensor (cable damaged by rodent),VS-10 x1,D. Petrov,1.0
+WO-24302,GB-KP400-02,2026-04-22,CM,"Night-time noise complaint from operators; suction strainer cleaned, noise persisted intermittently",,R. Silva,4.0
+WO-24355,HF-KP250-03,2026-06-02,PM,Regrease bearings 15 g each; noted slight rise in bearing temperature (68 C),LUB-EP2 x1,K. Osei,0.5
+WO-24390,CC-KP250X-02,2026-06-10,PM,ATEX 2-week inspection after commissioning: OK,,D. Petrov,2.0
+WO-24411,GB-KP250-04,2026-07-08,PM,"Standby pump test run, OK",,R. Silva,0.5
+WO-24466,CC-KP600-01,2026-08-03,PM,Operations increased boiler feed demand; pump now running at higher flow,,D. Petrov,0.0
+WO-24490,GB-KP250-03,2026-08-28,CM,Coupling elastomer element worn; replaced CPL-250 coupling. Alignment check skipped - laser tool out for calibration,CPL-250 x1,T. Brooks,3.0
+WO-24502,HF-KP250-03,2026-09-05,CM,"Operator reports hum from pump; vibration trend reviewed remotely, bearing wear suspected - parts requested",,K. Osei,0.0
+WO-24517,GB-KP400-02,2026-09-09,CM,Pitting observed on impeller eye during borescope inspection,,R. Silva,2.5

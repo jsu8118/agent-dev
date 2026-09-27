@@ -1,0 +1,12 @@
+*** PackRight Packaging ***    Tax ID on file
+--------------------------------------------------------------
+INV# PR-88213      DATE 2026-08-22      YOUR PO: PO-4500137
+CUSTOMER: KESTREL PUMPS + CONTROLS (AP DEPT)
+--------------------------------------------------------------
+  PKG-CRATE-L      Export crate, large (KP-400)               12 EA       385.00     4,620.00
+  PKG-FOAM         Foam inserts set                           40 SET       22.50       900.00
+--------------------------------------------------------------
+SUB-TOTAL USD 5,520.00
+TAX 441.60
+AMOUNT DUE USD 5,961.60
+TERMS NET 30

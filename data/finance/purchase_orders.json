@@ -1,0 +1,340 @@
+[
+  {
+    "po_number": "PO-4500128",
+    "supplier_id": "S-203",
+    "order_date": "2026-08-03",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "BRG-6309",
+        "description": "Deep groove ball bearing 6309 C3",
+        "qty": 400,
+        "uom": "EA",
+        "unit_price": 31.2
+      },
+      {
+        "line": 2,
+        "part": "BRG-6312",
+        "description": "Deep groove ball bearing 6312 C3",
+        "qty": 200,
+        "uom": "EA",
+        "unit_price": 44.8
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500131",
+    "supplier_id": "S-206",
+    "order_date": "2026-08-05",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "MRO-GLV-L",
+        "description": "Nitrile gloves, size L (box of 100)",
+        "qty": 60,
+        "uom": "BOX",
+        "unit_price": 11.5
+      },
+      {
+        "line": 2,
+        "part": "MRO-WIPE",
+        "description": "Industrial wipes (case)",
+        "qty": 25,
+        "uom": "CS",
+        "unit_price": 38.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500133",
+    "supplier_id": "S-207",
+    "order_date": "2026-08-06",
+    "status": "open",
+    "currency": "EUR",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "BAR-2205-60",
+        "description": "Duplex 2205 round bar, 60 mm",
+        "qty": 180,
+        "uom": "M",
+        "unit_price": 96.4
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500137",
+    "supplier_id": "S-208",
+    "order_date": "2026-08-10",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "PKG-CRATE-L",
+        "description": "Export crate, large (KP-400)",
+        "qty": 12,
+        "uom": "EA",
+        "unit_price": 385.0
+      },
+      {
+        "line": 2,
+        "part": "PKG-FOAM",
+        "description": "Foam inserts set",
+        "qty": 40,
+        "uom": "SET",
+        "unit_price": 22.5
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500140",
+    "supplier_id": "S-205",
+    "order_date": "2026-08-11",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "FRT-LTL",
+        "description": "LTL freight Port Aldren - Sierra Vista (weekly)",
+        "qty": 4,
+        "uom": "TRIP",
+        "unit_price": 1850.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500142",
+    "supplier_id": "S-201",
+    "order_date": "2026-08-12",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "CAST-KP400-LC",
+        "description": "KP-400 lower casing casting",
+        "qty": 14,
+        "uom": "EA",
+        "unit_price": 2240.0
+      },
+      {
+        "line": 2,
+        "part": "CAST-KP400-UC",
+        "description": "KP-400 upper casing casting",
+        "qty": 14,
+        "uom": "EA",
+        "unit_price": 1980.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500145",
+    "supplier_id": "S-202",
+    "order_date": "2026-08-13",
+    "status": "open",
+    "currency": "EUR",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "MS-250-OEM",
+        "description": "MS-250 cartridge seal (OEM supply)",
+        "qty": 150,
+        "uom": "EA",
+        "unit_price": 236.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500147",
+    "supplier_id": "S-203",
+    "order_date": "2026-08-14",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "BRG-6309",
+        "description": "Deep groove ball bearing 6309 C3",
+        "qty": 300,
+        "uom": "EA",
+        "unit_price": 31.2
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500150",
+    "supplier_id": "S-204",
+    "order_date": "2026-08-17",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "PCB-KC2-MAIN",
+        "description": "KC-2 main control board",
+        "qty": 300,
+        "uom": "EA",
+        "unit_price": 212.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500152",
+    "supplier_id": "S-206",
+    "order_date": "2026-08-18",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "MRO-FILTER",
+        "description": "Compressor intake filter",
+        "qty": 100,
+        "uom": "EA",
+        "unit_price": 18.75
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500155",
+    "supplier_id": "S-208",
+    "order_date": "2026-08-20",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "PKG-PALLET",
+        "description": "Heat-treated pallet 1200x1000",
+        "qty": 150,
+        "uom": "EA",
+        "unit_price": 14.2
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500158",
+    "supplier_id": "S-207",
+    "order_date": "2026-08-21",
+    "status": "open",
+    "currency": "EUR",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "BAR-316-40",
+        "description": "316L round bar, 40 mm",
+        "qty": 120,
+        "uom": "M",
+        "unit_price": 58.9
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500160",
+    "supplier_id": "S-202",
+    "order_date": "2026-08-24",
+    "status": "open",
+    "currency": "EUR",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "MS-100-OEM",
+        "description": "MS-100 seal kit (OEM supply)",
+        "qty": 200,
+        "uom": "EA",
+        "unit_price": 88.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500161",
+    "supplier_id": "S-201",
+    "order_date": "2026-08-25",
+    "status": "cancelled",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "CAST-KP250-C",
+        "description": "KP-250 casing casting",
+        "qty": 40,
+        "uom": "EA",
+        "unit_price": 610.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500163",
+    "supplier_id": "S-204",
+    "order_date": "2026-08-26",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "PCB-KC1-MAIN",
+        "description": "KC-1 main control board",
+        "qty": 120,
+        "uom": "EA",
+        "unit_price": 164.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500166",
+    "supplier_id": "S-201",
+    "order_date": "2026-08-28",
+    "status": "open",
+    "currency": "USD",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "CAST-IMP-250",
+        "description": "Impeller casting 250 mm, bronze",
+        "qty": 60,
+        "uom": "EA",
+        "unit_price": 318.0
+      }
+    ]
+  },
+  {
+    "po_number": "PO-4500169",
+    "supplier_id": "S-207",
+    "order_date": "2026-09-01",
+    "status": "open",
+    "currency": "EUR",
+    "buyer": "A. Brennan",
+    "lines": [
+      {
+        "line": 1,
+        "part": "BAR-2205-40",
+        "description": "Duplex 2205 round bar, 40 mm",
+        "qty": 90,
+        "uom": "M",
+        "unit_price": 71.3
+      }
+    ]
+  }
+]

@@ -1,0 +1,16 @@
+NORDIC ALLOYS AB
+INVOICE
+
+Invoice no.: NA-2026-1240
+Invoice date: 2026-09-05
+Your PO: PO-4500158
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  BAR-316-40       316L round bar, 40 mm                    1180 KG         5.99     7,068.20
+
+  Subtotal (EUR): 7,068.20
+  Tax (0%): 0.00
+  TOTAL DUE (EUR): 7,068.20
+
+Payment terms: Net 30. Remit to account ending 6603.

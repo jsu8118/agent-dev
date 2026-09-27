@@ -1,0 +1,17 @@
+FERROUS CASTINGS INC.
+INVOICE
+
+Invoice no.: FC-20047
+Invoice date: 2026-09-10
+Your PO: PO-4500166
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  CAST-IMP-250     Impeller casting 250 mm, bronze            60 EA       318.00    19,080.00
+  SURCH-FUEL       Fuel surcharge (not on PO)                  1 EA       420.00       420.00
+
+  Subtotal (USD): 19,500.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 19,500.00
+
+Payment terms: Net 45. Remit to account ending 4471.

@@ -1,0 +1,16 @@
+SUMMIT INDUSTRIAL SUPPLY
+INVOICE
+
+Invoice no.: SIS-30777
+Invoice date: 2026-09-05
+Your PO: -
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  MRO-TAPE         Thread seal tape (box)                     30 BOX        9.80       294.00
+
+  Subtotal (USD): 294.00
+  Tax (8%): 23.52
+  TOTAL DUE (USD): 317.52
+
+Payment terms: Net 30. Remit to account ending 5519.

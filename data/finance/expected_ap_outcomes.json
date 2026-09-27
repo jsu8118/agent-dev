@@ -1,0 +1,227 @@
+[
+  {
+    "file": "INV-01_allied_bearings.txt",
+    "invoice_number": "AB-77120",
+    "supplier_id": "S-203",
+    "po_number": "PO-4500128",
+    "invoice_total": 21440.0,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-02_summit_industrial.txt",
+    "invoice_number": "SIS-30419",
+    "supplier_id": "S-206",
+    "po_number": "PO-4500131",
+    "invoice_total": 1771.2,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-03_nordic_alloys.txt",
+    "invoice_number": "NA-2026-1182",
+    "supplier_id": "S-207",
+    "po_number": "PO-4500133",
+    "invoice_total": 17352.0,
+    "currency": "EUR",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-04_packright.txt",
+    "invoice_number": "PR-88213",
+    "supplier_id": "S-208",
+    "po_number": "PO-4500137",
+    "invoice_total": 5961.6,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-05_coastal_freight.txt",
+    "invoice_number": "CFS-5521",
+    "supplier_id": "S-205",
+    "po_number": "PO-4500140",
+    "invoice_total": 7400.0,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-06_ferrous_castings.txt",
+    "invoice_number": "FC-19930",
+    "supplier_id": "S-201",
+    "po_number": "PO-4500142",
+    "invoice_total": 59080.0,
+    "currency": "USD",
+    "expected_decision": "route_for_approval",
+    "expected_exceptions": [
+      "total_above_auto_approval_limit"
+    ]
+  },
+  {
+    "file": "INV-07_precision_seals.txt",
+    "invoice_number": "PS-RE-66102",
+    "supplier_id": "S-202",
+    "po_number": "PO-4500145",
+    "invoice_total": 37200.0,
+    "currency": "EUR",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "price_variance"
+    ]
+  },
+  {
+    "file": "INV-08_allied_bearings.txt",
+    "invoice_number": "AB-77188",
+    "supplier_id": "S-203",
+    "po_number": "PO-4500147",
+    "invoice_total": 9435.0,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-09_voltdrive.txt",
+    "invoice_number": "VD-INV-40551",
+    "supplier_id": "S-204",
+    "po_number": "PO-4500150",
+    "invoice_total": 63600.0,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "quantity_exceeds_received"
+    ]
+  },
+  {
+    "file": "INV-10_summit_industrial.txt",
+    "invoice_number": "SIS-30702",
+    "supplier_id": "S-206",
+    "po_number": "PO-4500152",
+    "invoice_total": 810.0,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-11_summit_industrial.txt",
+    "invoice_number": "SIS-30777",
+    "supplier_id": "S-206",
+    "po_number": null,
+    "invoice_total": 317.52,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "missing_po"
+    ]
+  },
+  {
+    "file": "INV-12_allied_bearings_resend.txt",
+    "invoice_number": "AB-77120",
+    "supplier_id": "S-203",
+    "po_number": "PO-4500128",
+    "invoice_total": 21440.0,
+    "currency": "USD",
+    "expected_decision": "reject",
+    "expected_exceptions": [
+      "duplicate_invoice"
+    ]
+  },
+  {
+    "file": "INV-13_packright.txt",
+    "invoice_number": "PR-88460",
+    "supplier_id": "S-208",
+    "po_number": "PO-4500155",
+    "invoice_total": 2343.0,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "tax_calculation_error"
+    ]
+  },
+  {
+    "file": "INV-14_coastal_freight.txt",
+    "invoice_number": "CFS-5588",
+    "supplier_id": "S-205",
+    "po_number": "PO-4500140",
+    "invoice_total": 1850.0,
+    "currency": "USD",
+    "expected_decision": "security_hold",
+    "expected_exceptions": [
+      "bank_details_change_request",
+      "prompt_injection",
+      "quantity_exceeds_received"
+    ]
+  },
+  {
+    "file": "INV-15_nordic_alloys.txt",
+    "invoice_number": "NA-2026-1240",
+    "supplier_id": "S-207",
+    "po_number": "PO-4500158",
+    "invoice_total": 7068.2,
+    "currency": "EUR",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "unit_of_measure_mismatch"
+    ]
+  },
+  {
+    "file": "INV-16_precision_seals.txt",
+    "invoice_number": "PS-RE-66240",
+    "supplier_id": "S-202",
+    "po_number": "PO-4500160",
+    "invoice_total": 17600.0,
+    "currency": "EUR",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-17_ferrous_castings.txt",
+    "invoice_number": "FC-20011",
+    "supplier_id": "S-201",
+    "po_number": "PO-4500161",
+    "invoice_total": 24400.0,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "po_cancelled",
+      "no_goods_receipt"
+    ]
+  },
+  {
+    "file": "INV-18_voltdrive.txt",
+    "invoice_number": "VD-INV-40602",
+    "supplier_id": "S-204",
+    "po_number": "PO-4500163",
+    "invoice_total": 19680.0,
+    "currency": "USD",
+    "expected_decision": "approve",
+    "expected_exceptions": []
+  },
+  {
+    "file": "INV-19_ferrous_castings.txt",
+    "invoice_number": "FC-20047",
+    "supplier_id": "S-201",
+    "po_number": "PO-4500166",
+    "invoice_total": 19500.0,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "charge_not_on_po"
+    ]
+  },
+  {
+    "file": "INV-20_nordic_alloys.txt",
+    "invoice_number": "NA-2026-1301",
+    "supplier_id": "S-207",
+    "po_number": "PO-4500169",
+    "invoice_total": 6417.0,
+    "currency": "USD",
+    "expected_decision": "hold",
+    "expected_exceptions": [
+      "currency_mismatch"
+    ]
+  }
+]

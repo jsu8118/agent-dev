@@ -1,0 +1,17 @@
+FERROUS CASTINGS INC.
+INVOICE
+
+Invoice no.: FC-19930
+Invoice date: 2026-08-30
+Your PO: PO-4500142
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  CAST-KP400-LC    KP-400 lower casing casting                14 EA     2,240.00    31,360.00
+  CAST-KP400-UC    KP-400 upper casing casting                14 EA     1,980.00    27,720.00
+
+  Subtotal (USD): 59,080.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 59,080.00
+
+Payment terms: Net 45. Remit to account ending 4471.

@@ -1,0 +1,5 @@
+deploy_id,service,version,started_at,finished_at,author,change_summary,config_diff
+D-3301,inventory-service,1.8.2,2026-09-13T15:01:40Z,2026-09-13T15:04:02Z,s.ito,Add bin-location field to stock lookup,
+D-3302,payment-service,3.4.1,2026-09-13T17:39:55Z,2026-09-13T17:42:10Z,r.das,Bump acquirer SDK to 5.2,
+D-3303,order-service,2.14.0,2026-09-14T09:11:48Z,2026-09-14T09:13:30Z,j.moreau,"Order history pagination; Helm values cleanup",db.pool.max: 50 -> 5
+D-3304,order-service,2.13.4,2026-09-14T10:05:00Z,2026-09-14T10:07:45Z,oncall.k.lam,Rollback of D-3303,db.pool.max: 5 -> 50

@@ -1,0 +1,16 @@
+FERROUS CASTINGS INC.
+INVOICE
+
+Invoice no.: FC-20011
+Invoice date: 2026-09-02
+Your PO: PO-4500161
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  CAST-KP250-C     KP-250 casing casting                      40 EA       610.00    24,400.00
+
+  Subtotal (USD): 24,400.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 24,400.00
+
+Payment terms: Net 45. Remit to account ending 4471.

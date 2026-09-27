@@ -1,0 +1,18 @@
+# Core: the Anthropic Python SDK (1.x is built on httpx2) + validation helpers
+anthropic>=1.8,<2
+pydantic>=2.7,<3
+jsonschema>=4.20
+
+# Day 5: Model Context Protocol (2.x API: MCPServer / Client) and the Claude Agent SDK
+mcp>=2.2,<3
+claude-agent-sdk>=0.2.160
+
+# Day 6 / Day 7: serving an agent over HTTP
+fastapi>=0.110
+uvicorn>=0.29
+
+# Testing
+pytest>=8
+
+# The course's shared helper package (labkit), installed in editable mode
+-e .

@@ -1,0 +1,9 @@
+supplier_id,name,country,currency,payment_terms,bank_account_last4,remit_email,tax_rate
+S-201,Ferrous Castings Inc.,US,USD,Net 45,4471,ar@ferrouscastings.example,0.0
+S-202,Precision Seals GmbH,DE,EUR,Net 30,9920,rechnung@precisionseals.example,0.0
+S-203,Allied Bearings Co.,US,USD,Net 30,1188,billing@alliedbearings.example,0.0
+S-204,VoltDrive Electronics,US,USD,Net 60,3056,ar@voltdrive.example,0.0
+S-205,Coastal Freight Services,US,USD,Net 15,7742,invoices@coastalfreight.example,0.0
+S-206,Summit Industrial Supply,US,USD,Net 30,5519,ar@summitindustrial.example,0.08
+S-207,Nordic Alloys AB,SE,EUR,Net 30,6603,faktura@nordicalloys.example,0.0
+S-208,PackRight Packaging,US,USD,Net 30,2894,billing@packright.example,0.08

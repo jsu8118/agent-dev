@@ -1,0 +1,11 @@
+*** Precision Seals GmbH ***    Tax ID on file
+--------------------------------------------------------------
+INV# PS-RE-66240      DATE 2026-09-08      YOUR PO: PO-4500160
+CUSTOMER: KESTREL PUMPS + CONTROLS (AP DEPT)
+--------------------------------------------------------------
+  MS-100-OEM       MS-100 seal kit (OEM supply)              200 EA        88.00    17,600.00
+--------------------------------------------------------------
+SUB-TOTAL EUR 17,600.00
+TAX 0.00
+AMOUNT DUE EUR 17,600.00
+TERMS NET 30

@@ -1,0 +1,16 @@
+VOLTDRIVE ELECTRONICS
+INVOICE
+
+Invoice no.: VD-INV-40602
+Invoice date: 2026-09-09
+Your PO: PO-4500163
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  PCB-KC1-MAIN     KC-1 main control board                   120 EA       164.00    19,680.00
+
+  Subtotal (USD): 19,680.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 19,680.00
+
+Payment terms: Net 60. Remit to account ending 3056.

@@ -1,0 +1,16 @@
+NORDIC ALLOYS AB
+INVOICE
+
+Invoice no.: NA-2026-1301
+Invoice date: 2026-09-11
+Your PO: PO-4500169
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  BAR-2205-40      Duplex 2205 round bar, 40 mm               90 M         71.30     6,417.00
+
+  Subtotal (USD): 6,417.00
+  Tax (0%): 0.00
+  TOTAL DUE (USD): 6,417.00
+
+Payment terms: Net 30. Remit to account ending 6603.

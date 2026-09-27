@@ -1,0 +1,13 @@
+asset_id,site,customer_id,model,serial_number,install_date,criticality,foundation,rated_current_a,bep_flow_m3h,notes
+GB-KP400-01,GBWD North pump station,C-1019,KP-400-S,KP400-2512-0003,2025-12-12,A,flexible,132,950,"Duty pump, north reservoir supply"
+GB-KP400-02,GBWD North pump station,C-1019,KP-400-S,KP400-2512-0004,2025-12-12,A,flexible,132,950,Duty/standby pair with -01; draws from low-level reservoir at night
+GB-KP250-03,GBWD North pump station,C-1019,KP-250-S,KP250-2403-0117,2024-03-20,B,rigid,41,210,Booster pump; coupling replaced 2026-08-28
+GB-KP250-04,GBWD North pump station,C-1019,KP-250-S,KP250-2403-0118,2024-03-20,B,rigid,41,210,Booster standby
+HF-KP250-01,Harbor Foods Plant 2,C-1005,KP-250-S,KP250-2505-0201,2025-05-15,B,rigid,41,210,CIP supply
+HF-KP250-02,Harbor Foods Plant 2,C-1005,KP-250-S,KP250-2505-0202,2025-05-15,B,rigid,41,210,Process water
+HF-KP250-03,Harbor Foods Plant 2,C-1005,KP-250-S,KP250-2411-0154,2024-11-02,A,rigid,41,210,"Chilled water loop, runs 24/7"
+HF-KP100-04,Harbor Foods Plant 2,C-1005,KP-100-S,KP100-2501-0077,2025-01-20,C,rigid,11,45,Washdown
+CC-KP600-01,Cobalt Chemical main site,C-1002,KP-600-M,KP600-2410-0012,2024-10-08,A,flexible,198,180,Boiler feed
+CC-KP250X-02,Cobalt Chemical main site,C-1002,KP-250-X,KP250-2605-0301,2026-05-22,A,rigid,41,210,"Acid transfer, Zone 1 (ATEX)"
+CC-KP250X-03,Cobalt Chemical main site,C-1002,KP-250-X,KP250-2605-0302,2026-05-22,A,rigid,41,210,"Acid transfer, Zone 1 (ATEX), standby"
+CC-KP100-04,Cobalt Chemical main site,C-1002,KP-100-S,KP100-2308-0033,2023-08-14,C,rigid,11,45,Cooling tower make-up

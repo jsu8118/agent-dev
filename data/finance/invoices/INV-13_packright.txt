@@ -1,0 +1,16 @@
+PACKRIGHT PACKAGING
+INVOICE
+
+Invoice no.: PR-88460
+Invoice date: 2026-09-04
+Your PO: PO-4500155
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  PKG-PALLET       Heat-treated pallet 1200x1000             150 EA        14.20     2,130.00
+
+  Subtotal (USD): 2,130.00
+  Tax (8%): 213.00
+  TOTAL DUE (USD): 2,343.00
+
+Payment terms: Net 30. Remit to account ending 2894.

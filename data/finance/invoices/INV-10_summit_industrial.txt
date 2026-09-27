@@ -1,0 +1,16 @@
+SUMMIT INDUSTRIAL SUPPLY
+INVOICE
+
+Invoice no.: SIS-30702
+Invoice date: 2026-09-02
+Your PO: PO-4500152
+Bill to: Kestrel Pumps & Controls, Accounts Payable, Port Aldren
+
+  Item             Description                               Qty UoM  Unit price       Amount
+  MRO-FILTER       Compressor intake filter                   40 EA        18.75       750.00
+
+  Subtotal (USD): 750.00
+  Tax (8%): 60.00
+  TOTAL DUE (USD): 810.00
+
+Payment terms: Net 30. Remit to account ending 5519.
