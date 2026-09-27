@@ -1,0 +1,10 @@
+{"id": "p01", "question": "Within how many days of delivery can a standard catalog item be returned?", "gold": [{"doc": "returns_rma_policy", "section": "1. Returns of non-defective items"}], "type": "exact_terms"}
+{"id": "p02", "question": "Who has to sign off a $7,500 refund?", "gold": [{"doc": "returns_rma_policy", "section": "6. Refunds"}], "type": "paraphrase"}
+{"id": "p03", "question": "Can the customer send back a configured KC-2 controller they no longer need?", "gold": [{"doc": "returns_rma_policy", "section": "2. Non-returnable items"}], "type": "policy"}
+{"id": "p04", "question": "Our EU shipment is stuck in customs. How long does that usually take and which number does the consignee need?", "gold": [{"doc": "shipping_policy", "section": "4. Delays and exceptions"}], "type": "symptom"}
+{"id": "p05", "question": "How long is a pump covered after it ships?", "gold": [{"doc": "warranty_policy", "section": "1. Coverage periods"}], "type": "paraphrase"}
+{"id": "p06", "question": "Will Kestrel pay for our lost production while the pump was down?", "gold": [{"doc": "warranty_policy", "section": "5. Limits"}], "type": "paraphrase"}
+{"id": "p07", "question": "Someone writing from a gmail address wants their invoice details. What must happen first?", "gold": [{"doc": "data_privacy_policy", "section": "1. Identity verification before discussing an account"}], "type": "symptom"}
+{"id": "p08", "question": "A supplier emails new bank account details for their next payment. What do we do?", "gold": [{"doc": "ap_invoice_matching_policy", "section": "3. Bank-detail changes and suspicious content (fraud prevention)"}, {"doc": "safety_escalation_sop", "section": "5. Security escalation"}], "type": "policy"}
+{"id": "p09", "question": "How long do we keep agent traces?", "gold": [{"doc": "data_privacy_policy", "section": "4. Retention"}], "type": "exact_terms"}
+{"id": "p10", "question": "Smoke is coming out of the controller cabinet. How fast must a human respond?", "gold": [{"doc": "safety_escalation_sop", "section": "1. Always escalate immediately (Priority P1)"}], "type": "symptom"}
