@@ -16,7 +16,7 @@
   },
   "CC-KP600-01": {
     "issue": "overload_right_of_bep",
-    "evidence": "flow drifting to ~120% BEP and motor current ~20-26% above normal after demand increase (WO-24466)",
+    "evidence": "after the demand increase (WO-24466) flow rises ~20% (from ~83% to ~100% of BEP on average, above BEP at the daily peak) and motor current ~22%, above its 198 A rating",
     "action": "throttle to duty point or resize"
   },
   "GB-KP250-03": {

@@ -135,8 +135,9 @@ def build(rng: random.Random, out_dir: Path) -> None:
                         "action": "raise minimum reservoir level / check NPSHa; clean strainer; keep flow above 380 m3/h"},
         "CC-KP100-04": {"issue": "sensor_fault", "evidence": "vibration exactly 0.0 while running=1 from 2026-09-08 06:00 "
                         "to 2026-09-10 14:00", "action": "replace/repair VS-10 sensor"},
-        "CC-KP600-01": {"issue": "overload_right_of_bep", "evidence": "flow drifting to ~120% BEP and motor current "
-                        "~20-26% above normal after demand increase (WO-24466)", "action": "throttle to duty point or resize"},
+        "CC-KP600-01": {"issue": "overload_right_of_bep", "evidence": "after the demand increase (WO-24466) flow rises "
+                        "~20% (from ~83% to ~100% of BEP on average, above BEP at the daily peak) and motor current "
+                        "~22%, above its 198 A rating", "action": "throttle to duty point or resize"},
         "GB-KP250-03": {"issue": "misalignment", "evidence": "step increase of ~1.7 mm/s after coupling replacement "
                         "2026-08-28 without alignment check (WO-24490)", "action": "laser alignment (SVC-ALIGN)"},
     }
