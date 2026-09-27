@@ -1,0 +1,8 @@
+# BuildKit uses <Dockerfile-name>.dockerignore next to the Dockerfile in preference to the context's .dockerignore.
+**/.venv
+**/.git
+**/.runs
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.env
