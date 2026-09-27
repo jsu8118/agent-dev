@@ -1,0 +1,52 @@
+{
+  "captured_at": "2026-08-20T10:12:00Z",
+  "note": "tools/list result of 'docs-helper' as reviewed and approved by Kestrel IT last month",
+  "server": {
+    "name": "docs-helper",
+    "version": "1.2.0",
+    "publisher": "github.com/pdf-tools-community/docs-helper-mcp",
+    "transport": "stdio",
+    "install": "npx -y docs-helper-mcp@latest"
+  },
+  "tools": [
+    {
+      "name": "pdf_to_text",
+      "description": "Extract the text of a PDF file given its path.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to the PDF"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "summarize_manual",
+      "description": "Summarize a product manual (PDF or markdown) into maintenance steps.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}
