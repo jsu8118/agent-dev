@@ -30,6 +30,7 @@ TECH = re.compile(r"vibration|\bF0\d\b|grease|noisy|noise|ruido|runs? (?:hot|at)
 INQUIRY = re.compile(r"quote|in stock|compatible|listing|do you have|pricing|recommend|lieferzeit|who should i talk", re.I)
 INJECTION = re.compile(r"ignore (?:all )?(?:previous|prior) instructions|system override|administrator mode|"
                        r"note to the ai|ai system|pre-approved|skip verification", re.I)
+LEGAL = re.compile(r"\blawyers?\b|\battorneys?\b|legal action|\bsue\b|lawsuit|breach of contract", re.I)
 
 
 def _body(req: MockRequest) -> str:
@@ -95,7 +96,7 @@ def triage_heuristic(text: str) -> dict:
     else:
         sentiment = "neutral"
     lookalike = bool(re.search(r"-helpdesk\.|invoice-center\.", sender))
-    requires_human = priority == "P1" or bool(INJECTION.search(text)) or lookalike
+    requires_human = priority == "P1" or bool(INJECTION.search(text)) or lookalike or bool(LEGAL.search(text))
     if re.search(r"[¿¡]|\bpedido\b|\bhola\b|\bgracias\b|\bnuestro\b|\bbomba\b", text, re.I):
         language = "es"
     elif re.search(r"\bguten\b|\bwir\b|pumpe|förderhöhe|\bund\b", text, re.I):

@@ -39,7 +39,7 @@ text = "".join(b.text for b in msg.content if b.type == "text")
 ## stop_reason
 
 `end_turn` · `tool_use` (run tools, send results) · `max_tokens` (incomplete — never run a truncated tool call)
-· `stop_sequence` · `pause_turn` (server tool loop paused — re-send to continue) · `refusal` (HTTP 200; check `stop_details`).
+· `stop_sequence` · `pause_turn` (server tool loop paused — re-send to continue; the Python Tool Runner does it for you) · `refusal` (HTTP 200; check `stop_details`).
 
 ## Structured outputs
 

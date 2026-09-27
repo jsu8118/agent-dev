@@ -3,6 +3,8 @@
 #   docker compose run --rm tests                 # full test suite, mock mode
 #   docker compose run --rm course bash           # a shell with everything installed (repo mounted at /course)
 #   docker compose up mock-api                    # the offline mock Claude API on http://localhost:8765
+#   docker compose up copilot                     # the Day 7 capstone service on http://localhost:8080
+#                                                 #   (set COPILOT_API_KEY in .env to require an X-Api-Key header)
 services:
   course:
     build: .
@@ -29,4 +31,14 @@ services:
     build: .
     command: python -m labkit.mock.server --host 0.0.0.0 --port 8765
     ports:
-      - "8765:8765"
+      - "127.0.0.1:8765:8765"          # published on the host's loopback only
+
+  copilot:
+    image: claude-agent-course
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    command: uvicorn --app-dir day7_capstone/reference copilot.service:app --host 0.0.0.0 --port 8080
+    ports:
+      - "127.0.0.1:8080:8080"

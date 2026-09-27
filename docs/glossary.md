@@ -60,7 +60,7 @@
 
 **Orchestrator–workers** — a pattern in which a lead model plans and delegates subtasks to worker calls or agents, then synthesizes their results.
 
-**`pause_turn`** — a stop reason for long-running server-side tool loops; re-send the conversation (including the paused assistant turn) to continue.
+**`pause_turn`** — a stop reason for long-running server-side tool loops; re-send the conversation (including the paused assistant turn) to continue. The Python Tool Runner (SDK 1.8) does this automatically; a manual loop must do it itself.
 
 **Prefill (assistant)** — ending `messages` with a partial assistant turn to steer the output format. Rejected (400) on current models; use structured outputs.
 

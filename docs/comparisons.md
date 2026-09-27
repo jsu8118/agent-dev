@@ -95,3 +95,18 @@ tools) → **effort** (sweep down) → **model routing** (cheaper model where ev
 | **Tool / authorization** | identity from the channel; refund limits in code | **the strongest: enforces where actions happen** |
 | Output checker | block forbidden promises, PII | catches what slipped through |
 | Human approval | irreversible actions | final safety net |
+
+## Code, model or person? [Day 7]
+
+The capstone's central decision, applied box by box. Ask: *what happens if this fails once?*
+
+| Responsibility | Cost of one failure | Put it in | Kestrel example |
+|---|---|---|---|
+| Safety escalation, the SOP reply | a person in danger | **code** (+ the model's prompt as a second net) | screen backstop OR triage P1 → P1 page + fixed template |
+| Keeping suspicious input away from actions | fraud, data leak | **code** | quarantine before any model reads the email |
+| Money limits, identity, eligibility | financial loss, privacy breach | **code, in the tools** | `issue_refund`, `_verify`, `create_rma` |
+| Classifying intent and urgency | a misrouted ticket (caught downstream) | **model** (structured output) | triage |
+| Resolving the request, choosing tool calls, writing the reply | a slower or clumsier answer | **model** (agent) + evals | the support agent |
+| Linking a complaint to field-quality data | a late recall decision | **code**, from data | quality-hold detector |
+| Last words before sending | an embarrassing or leaking email | **code** for one-sentence rules; **evals** for tone and correctness | output guard |
+| Exceptions, legal threats, ambiguity | a costly precedent | **person** (review queue) | `requires_human` → draft held for review |
