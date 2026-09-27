@@ -245,11 +245,13 @@ def _validate_conversation(messages: list[dict], spec: ModelSpec, thinking_on: b
             # Thinking must be preserved in an active tool loop (only checked for turns the mock produced).
             is_last_assistant = all(m["role"] != "assistant" for _, m in merged[pos + 1:])
             produced_by_mock = any(str(t).startswith(signing.TOOL_ID_PREFIX) for t in tool_ids)
-            if thinking_on and is_last_assistant and produced_by_mock and blocks[0].get("type") not in (
+            # A compaction block may precede the thinking block ([compaction, thinking, tool_use] is valid).
+            first = next((k for k, b in enumerate(blocks) if b.get("type") != "compaction"), 0)
+            if thinking_on and is_last_assistant and produced_by_mock and blocks[first].get("type") not in (
                     "thinking", "redacted_thinking"):
                 raise bad_request(
-                    f"messages.{orig_idx}.content.0.type: Expected `thinking` or `redacted_thinking`, but found "
-                    f"`{blocks[0].get('type')}`. When thinking is enabled, a final `assistant` message must start with "
+                    f"messages.{orig_idx}.content.{first}.type: Expected `thinking` or `redacted_thinking`, but found "
+                    f"`{blocks[first].get('type')}`. When thinking is enabled, a final `assistant` message must start with "
                     "a thinking block (preceding the lastmost set of `tool_use` and `tool_result` blocks). "
                     "Append `response.content` verbatim instead of rebuilding assistant turns.")
         else:

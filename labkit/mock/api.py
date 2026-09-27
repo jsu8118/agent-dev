@@ -149,15 +149,16 @@ class MockAnthropicAPI:
 
         message = build_message(req, reply, cache, cleared_edits=applied_edits, compaction=compaction)
         if compaction is not None:
+            # Like the real API: the compaction pass is its own iteration, and top-level usage covers only the
+            # message iteration. Bill by summing usage.iterations.
             summary_tokens = text_tokens(compaction["content"])
-            message["usage"]["output_tokens"] += summary_tokens
-            message["usage"]["iterations"] = [
+            usage = message["usage"]
+            usage["iterations"] = [
                 {"type": "compaction", "input_tokens": compaction_input, "output_tokens": summary_tokens,
                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
-                {"type": "message", "input_tokens": message["usage"]["input_tokens"],
-                 "output_tokens": message["usage"]["output_tokens"] - summary_tokens,
-                 "cache_creation_input_tokens": message["usage"]["cache_creation_input_tokens"],
-                 "cache_read_input_tokens": message["usage"]["cache_read_input_tokens"]},
+                {"type": "message", "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                 "cache_creation_input_tokens": usage["cache_creation_input_tokens"],
+                 "cache_read_input_tokens": usage["cache_read_input_tokens"]},
             ]
         return message
 

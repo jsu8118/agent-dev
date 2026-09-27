@@ -57,10 +57,12 @@ class UsageLedger:
             totals.cost += cost_usd(usage, model, batch=batch)
 
     def record_message(self, message: dict, request_model: str | None, *, batch: bool = False) -> None:
-        """Record a Message JSON object, splitting server-side fallback attempts by model."""
+        """Record a Message JSON object. When `usage.iterations` is present (server-side fallbacks, compaction),
+        it is the per-attempt source of truth and top-level usage covers only the final attempt, so bill each
+        iteration at the rates of the model that ran it."""
         usage = message.get("usage") or {}
         iterations = usage.get("iterations") or []
-        if any(it.get("type") in ("fallback_message", "advisor_message") for it in iterations):
+        if iterations:
             for it in iterations:
                 model = it.get("model") or request_model or message.get("model", "")
                 self.record(model, it, batch=batch)
