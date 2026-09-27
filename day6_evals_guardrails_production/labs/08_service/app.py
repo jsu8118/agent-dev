@@ -158,12 +158,10 @@ def create_app(settings: Settings | None = None, client: anthropic.Anthropic | N
     """
     settings = settings or Settings.from_env()
     client = client or get_client(timeout=settings.request_timeout_s, max_retries=settings.max_retries)
-    worker = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
-    # The course's stand-in for Kestrel's ERP: a private scratch copy per worker.  In production this is the
-    # shared system of record, reached over the network - never state inside the worker.
-    erp_name = f"day6_service_erp_{worker}.db"
-    scratch_db(erp_name).close()
-    erp_path = runs_dir("db") / erp_name
+    # The course's stand-in for Kestrel's ERP: a private scratch copy per worker, made at startup and deleted at
+    # shutdown (see lifespan).  In production this is the shared system of record, reached over the network -
+    # never state inside the worker.
+    erp_path = runs_dir("db") / f"day6_service_erp_{os.getpid()}-{uuid.uuid4().hex[:6]}.db"
     domains = g.customer_domains()
     # Shared by every worker on the host (SQLite locks across processes). A per-worker store would let a
     # redelivery that lands on another worker run the agent - and its write tools - a second time.
@@ -228,7 +226,11 @@ def create_app(settings: Settings | None = None, client: anthropic.Anthropic | N
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.slots = asyncio.Semaphore(settings.max_concurrency)     # bound to the running event loop
-        yield
+        scratch_db(erp_path.name).close()                                 # this worker's ERP copy
+        try:
+            yield
+        finally:
+            erp_path.unlink(missing_ok=True)
 
     app = FastAPI(title="Kestrel support agent", version="1.0.0", lifespan=lifespan)
     app.state.settings, app.state.metrics = settings, metrics
@@ -273,7 +275,8 @@ def create_app(settings: Settings | None = None, client: anthropic.Anthropic | N
     def healthz() -> dict:
         """Liveness + readiness WITHOUT calling the model: a health check must be free and fast."""
         try:
-            with closing(sqlite3.connect(erp_path)) as conn:
+            # Read-only URI: a probe must have no side effects (a plain connect would CREATE a missing file).
+            with closing(sqlite3.connect(erp_path.as_uri() + "?mode=ro", uri=True)) as conn:
                 conn.execute("SELECT 1 FROM customers LIMIT 1").fetchone()
             ready = True
         except sqlite3.Error:
