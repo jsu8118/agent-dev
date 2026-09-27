@@ -2,8 +2,9 @@
 
     ANTHROPIC_API_KEY=sk-... python scripts/smoke_live.py [--cap 3.00] [--model claude-opus-5] [--only day1]
 
-Every lab prints a usage summary; this script parses each lab's TOTAL line and stops before the
-cumulative (estimated, list-price) spend exceeds --cap.  Use it after upgrading the SDK or changing
+Every lab prints a usage summary; this script parses each lab's TOTAL line and stops launching labs once
+the cumulative (estimated, list-price) spend reaches --cap. A lab already running is not interrupted, so
+the total can end slightly above the cap.  Use it after upgrading the SDK or changing
 the default model, to confirm that the course still works end-to-end in live mode.
 """
 
@@ -30,9 +31,10 @@ LABS = [
     ("day2_tools_agent_loop/labs/06_support_agent.py", []),
     ("day3_context_rag_memory/labs/02_prompt_caching.py", []),
     ("day3_context_rag_memory/labs/03_rag_with_citations.py", []),
-    ("day4_workflows_multi_agent/labs/01_prompt_chaining_invoices.py", []),
+    ("day4_workflows_multi_agent/labs/01_prompt_chaining_invoices.py", ["--limit", "5"]),
     ("day5_mcp_agent_sdk/labs/03_claude_with_mcp_tools.py", []),
     ("day6_evals_guardrails_production/labs/02_eval_harness.py", ["--limit", "8"]),
+    ("day7_capstone/reference/run_pipeline.py", ["--ticket", "T-1301", "--ticket", "T-1801"]),
 ]
 TOTAL_RE = re.compile(r"^\s*TOTAL\s+calls=\d+\s+\$(\d+\.\d+)", re.M)
 

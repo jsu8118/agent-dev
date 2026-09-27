@@ -36,12 +36,12 @@ reports, service logs, evaluation sets):
 | Day | Theme | You learn | Labs |
 |---|---|---|---|
 | **1** | [Foundations: from LLM calls to agents](day1_foundations/README.md) | single call vs workflow vs agent; the Messages API; models, tokens, cost; adaptive thinking and effort; structured outputs; streaming; errors, retries, refusals and fallbacks | 7 labs · ticket triage |
-| **2** | [Tool use & the agent loop](day2_tools_agent_loop/README.md) | how tool use works; the manual loop and the Tool Runner; parallel tools; error handling; tool design as an interface; policy in code; human-in-the-loop | 7 labs · support agent |
+| **2** | [Tool use & the agent loop](day2_tools_agent_loop/README.md) | how tool use works; the manual loop and the Tool Runner; parallel tools; error handling; tool design as an interface; policy in code; human-in-the-loop; `tool_choice` and strict tools across models | 8 labs · order desk, support agent |
 | **3** | [Context engineering: caching, retrieval & memory](day3_context_rag_memory/README.md) | context budgets; prompt caching; long context vs RAG vs agentic search; citations; retrieval evaluation; context editing and compaction; the memory tool | 7 labs · field-service assistant |
 | **4** | [Workflow patterns & multi-agent systems](day4_workflows_multi_agent/README.md) | chaining, routing, parallelization, orchestrator–workers, evaluator–optimizer; multi-agent trade-offs; frameworks compared | 7 labs · AP automation, quality investigation |
 | **5** | [MCP & the Claude Agent SDK](day5_mcp_agent_sdk/README.md) | the Model Context Protocol (servers, clients, transports, security); the Claude Agent SDK (built-in tools, hooks, custom tools, subagents); choosing a harness | 7 labs · plant-ops MCP server, SRE agent |
 | **6** | [Evaluation, guardrails, observability & production](day6_evals_guardrails_production/README.md) | eval harnesses, LLM-as-judge calibration; layered guardrails and prompt injection; tracing and metrics; reliability; batching and cost; deploying a service | 8 labs · go-live review |
-| **7** | [Capstone](day7_capstone/README.md) | design, build, evaluate and ship an end-to-end agent to acceptance criteria | project + reference solution |
+| **7** | [Capstone](day7_capstone/README.md) | integrate everything into a go-live-ready system: deterministic gates around an agent, acceptance criteria as executable gates, a staged rollout | project (6 milestones + docs) · reference solution, design doc, go-live memo |
 
 Each day contains a **lesson** (`README.md`), numbered **labs**, **exercises** and detailed **solutions**.
 Cross-cutting references: [cheat sheet](docs/cheatsheet.md) · [decision tables](docs/comparisons.md) ·
@@ -118,6 +118,8 @@ make test-day D=3           # one day
 python -m pytest tests/test_labkit_mock.py   # the mock API's own tests (it must behave like the real API)
 python scripts/smoke_live.py --cap 3         # live smoke test (needs a key)
 python data/generate_data.py                 # regenerate the dataset (deterministic)
+python day7_capstone/starter/run_starter_check.py   # capstone progress, milestone by milestone
+docker compose up copilot                    # the capstone's HTTP service on http://localhost:8080
 ```
 
 ## Repository layout
