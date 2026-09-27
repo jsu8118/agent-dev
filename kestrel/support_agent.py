@@ -62,6 +62,14 @@ class AgentResult:
 
 SAFE_FALLBACK_REPLY = ("Thank you for your message. I've passed it to a member of our support team, who will get back "
                        "to you shortly.")
+# Non-streaming ceiling for the truncation retry: the SDK refuses (client-side) non-streaming requests it estimates
+# would run past 10 minutes, i.e. max_tokens above ~21,333. Beyond this, hand over to a person instead.
+MAX_TOKENS_CAP = 16_000
+
+
+def _hand_over(desk: SupportDesk, summary: str) -> None:
+    """Escalate through the tool layer, so the handover is audited and visible like any other action."""
+    desk.run("escalate_to_human", {"queue": "support_manager", "priority": "P3", "summary": summary})
 
 
 def _text(message: Any) -> str:
@@ -100,8 +108,7 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
 
             if response.stop_reason == "refusal":
                 # The model (and any fallback) declined. Don't send partial output; hand over to a human.
-                desk.escalate_to_human("support_manager", "P3", "Automated assistant declined this request; "
-                                       "please handle manually.")
+                _hand_over(desk, "Automated assistant declined this request; please handle manually.")
                 result.escalated = True
                 result.reply = SAFE_FALLBACK_REPLY
                 break
@@ -111,9 +118,15 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
 
             if response.stop_reason == "max_tokens":
                 if tool_uses or not _text(response):
-                    # A tool call may have been cut off mid-input: never execute it. Retry the turn with room to spare.
+                    # A tool call may have been cut off mid-input: never execute it. Retry the turn with room to
+                    # spare, up to the non-streaming ceiling; past that, hand over to a person.
                     messages.pop()
-                    params["max_tokens"] = min(params["max_tokens"] * 2, 32000)
+                    if params["max_tokens"] >= MAX_TOKENS_CAP:
+                        _hand_over(desk, f"Agent ran out of output budget ({MAX_TOKENS_CAP} tokens); please handle.")
+                        result.escalated = True
+                        result.reply = SAFE_FALLBACK_REPLY
+                        break
+                    params["max_tokens"] = min(params["max_tokens"] * 2, MAX_TOKENS_CAP)
                     continue
                 result.reply = _text(response)
                 break
@@ -134,7 +147,7 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
                                      "is_error": is_error})
             messages.append({"role": "user", "content": tool_results})
         else:
-            desk.escalate_to_human("support_manager", "P3", f"Agent hit the {max_turns}-turn limit.")
+            _hand_over(desk, f"Agent hit the {max_turns}-turn limit.")
             result.escalated = True
             result.reply = SAFE_FALLBACK_REPLY
 

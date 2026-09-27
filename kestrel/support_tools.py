@@ -228,13 +228,19 @@ class SupportDesk:
         due = rma["refund_due_usd"]
         if amount <= 0 or amount > due + 0.005:
             raise ToolError(f"Amount must be > 0 and at most the refund due for {rma_id}: ${due:,.2f}.")
-        approver = policy.refund_approver(amount)
+        # The approval level follows the refund DUE, not the amount requested (RET-002 s.6): otherwise a partial
+        # refund under the limit would slip past approval and close the RMA with money still owed.
+        approver = policy.refund_approver(due)
         if approver != "agent":
             queue = "support_manager" if approver == "support_manager" else "finance"
-            raise ToolError(f"A refund of ${amount:,.2f} exceeds the agent approval limit of "
-                            f"${policy.AGENT_REFUND_LIMIT:,.2f} and must be approved by the "
+            raise ToolError(f"The refund due on {rma_id} is ${due:,.2f}, above the agent approval limit of "
+                            f"${policy.AGENT_REFUND_LIMIT:,.2f}; it must be approved by the "
                             f"{approver.replace('_', ' ').title()}. Do NOT retry or split it; call escalate_to_human "
                             f"with queue='{queue}' and tell the customer it is pending approval.")
+        if abs(amount - due) > 0.005:
+            raise ToolError(f"Partial refunds need a person: the refund due on {rma_id} is ${due:,.2f}. Issue the full "
+                            "amount, or call escalate_to_human with queue='support_manager' if the customer asked for "
+                            "a different amount.")
         refund_id = f"RF-{rma_id[4:]}"
         self.db.execute("INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?)",
                         (refund_id, rma["order_id"], rma["rma_id"], amount, reason[:200], "agent", "issued", _now()))
