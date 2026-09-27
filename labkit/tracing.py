@@ -79,8 +79,17 @@ class Span:
             "gen_ai.usage.output_tokens": _get(usage, "output_tokens"),
             "gen_ai.usage.cache_read_input_tokens": _get(usage, "cache_read_input_tokens"),
             "gen_ai.usage.cache_creation_input_tokens": _get(usage, "cache_creation_input_tokens"),
-            "cost_usd": round(cost_usd(usage, model), 6),
+            "cost_usd": round(_message_cost(usage, model), 6),
         })
+
+
+def _message_cost(usage: Any, model: str) -> float:
+    """Cost of one response. With `usage.iterations` (server-side fallbacks, compaction) each iteration is billed at
+    the rates of the model that ran it; top-level usage covers only the final attempt."""
+    iterations = _get(usage, "iterations", None) or []
+    if iterations:
+        return sum(cost_usd(it, _get(it, "model", None) or model) for it in iterations)
+    return cost_usd(usage, model)
 
 
 class Tracer:

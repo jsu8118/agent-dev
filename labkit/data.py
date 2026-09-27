@@ -43,6 +43,18 @@ def ops_db(*, readonly: bool = True) -> sqlite3.Connection:
     return conn
 
 
+def memory_db() -> sqlite3.Connection:
+    """A private, writable in-memory copy of the ops DB: isolated per connection, nothing left on disk."""
+    source = ops_db()
+    try:
+        conn = sqlite3.connect(":memory:", check_same_thread=False)
+        source.backup(conn)
+    finally:
+        source.close()
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def scratch_db(name: str = "kestrel_ops_scratch.db") -> sqlite3.Connection:
     """A fresh writable copy of the ops DB under .runs/ - for labs whose tools write (refunds, RMAs...)."""
     target = runs_dir("db") / name

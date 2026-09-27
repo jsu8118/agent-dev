@@ -94,3 +94,63 @@ def test_reference_agent_passes_eval_set_in_mock_mode():
         assert set(sc["expect"]["tools_required"]) <= called, sc["id"]
         for phrase in sc["expect"]["must_include"]:
             assert any(p.lower() in result.reply.lower() for p in phrase.split("|")), (sc["id"], phrase, result.reply)
+
+
+def test_partial_refund_cannot_dodge_the_approval_limit():
+    a = ANCHORS["refund_manager"]                        # refund due $9,188.50: Support Manager territory
+    desk = SupportDesk("travis.greer@midlandoil.example", db=scratch_db("t_partial.db"))
+    content, is_error = desk.run("issue_refund", {"rma_id": a["rma_id"], "amount_usd": 2400, "reason": "x"})
+    assert is_error and "approv" in content
+    small = ANCHORS["refund_small"]
+    desk2 = SupportDesk("luis.romero@keystone-mech.example", db=scratch_db("t_partial2.db"))
+    content, is_error = desk2.run("issue_refund", {"rma_id": small["rma_id"], "amount_usd": 100, "reason": "x"})
+    assert is_error and "Partial refunds need a person" in content
+
+
+def test_not_found_and_not_yours_get_the_same_answer():
+    stranger = SupportDesk("someone@mailbox.example", db=scratch_db("t_enum.db"))
+    exists = stranger.run("get_order", {"order_id": ANCHORS["pending_strategic"]["order_id"]})
+    missing = stranger.run("get_order", {"order_id": "SO-99999"})
+    assert exists == missing and exists[1] is True and "not verified" in exists[0]
+
+
+def test_reference_ids_stay_unique_under_concurrent_writers():
+    import sqlite3
+    import threading
+    scratch_db("t_race.db").close()
+    path = DATA_DIR.parent / ".runs" / "db" / "t_race.db"
+    ids, lock = [], threading.Lock()
+
+    def worker() -> None:
+        conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        desk = SupportDesk("jorge.medina@greenvalley-coop.example", db=conn)
+        for _ in range(5):
+            content, is_error = desk.run("escalate_to_human", {"queue": "order_desk", "priority": "P3", "summary": "t"})
+            assert not is_error, content
+            with lock:
+                ids.append(json.loads(content)["escalation_id"])
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(ids) == 20 and len(set(ids)) == 20
+
+
+def test_default_desk_uses_a_private_database():
+    a, b = SupportDesk("x@y.example"), SupportDesk("x@y.example")
+    a.db.execute("DELETE FROM escalations")
+    a.db.commit()
+    assert a.db is not b.db and b.db.execute("SELECT COUNT(*) FROM orders").fetchone()[0] > 0
+
+
+def test_agent_toolset_can_be_narrowed():
+    client = get_client()
+    read_only = [t for t in TOOLS if t["name"] not in ("create_rma", "issue_refund")]
+    result = run_support_agent(client, "We over-ordered MS-250 seal kits on SO-10283. Can we return 4 unopened kits?",
+                               "aisha.karim@harborfoods.example", tools=read_only,
+                               desk=SupportDesk("aisha.karim@harborfoods.example", db=scratch_db("t_narrow.db")))
+    assert "create_rma" not in {c["name"] for c in result.tool_calls}
+    assert result.reply

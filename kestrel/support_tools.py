@@ -23,7 +23,7 @@ import re
 import sqlite3
 from typing import Any
 
-from labkit.data import scratch_db
+from labkit.data import memory_db
 
 from . import policy
 from .kb import default_kb
@@ -58,7 +58,7 @@ class SupportDesk:
     def __init__(self, requester_email: str, *, db: sqlite3.Connection | None = None,
                  actor: str = "support-agent", ticket_ref: str | None = None) -> None:
         self.requester_email = (requester_email or "").strip().lower()
-        self.db = db if db is not None else scratch_db()
+        self.db = db if db is not None else memory_db()     # a private copy unless you pass the system of record
         self.actor = actor
         self.ticket_ref = ticket_ref or "adhoc"
         self.calls: list[dict] = []
@@ -94,6 +94,20 @@ class SupportDesk:
             skus = [r[0] for r in self.db.execute("SELECT sku FROM order_lines WHERE order_id = ?", (order_id,))]
             raise ToolError(f"SKU {sku} is not on order {order_id}. SKUs on this order: {', '.join(skus)}.")
         return row
+
+    def _insert_with_next_id(self, next_sql: str, id_format: str, insert_sql: str,
+                             row: Any, attempts: int = 5) -> str:
+        """Insert a row under the next sequential ID. Several workers can compute the same "next" number at once;
+        the primary key rejects the loser, which simply takes the following number."""
+        for _ in range(attempts):
+            new_id = id_format.format(self.db.execute(next_sql).fetchone()[0])
+            try:
+                self.db.execute(insert_sql, row(new_id))
+                self.db.commit()
+                return new_id
+            except sqlite3.IntegrityError:
+                self.db.rollback()
+        raise ToolError("Could not allocate a reference number (the system is busy). Try the call again.")
 
     def _audit(self, action: str, target: str, details: Any) -> None:
         self.db.execute("INSERT INTO audit_log (ts, actor, action, target, details) VALUES (?,?,?,?,?)",
@@ -209,12 +223,11 @@ class SupportDesk:
         if existing:
             return {"rma_id": existing[0], "status": "approved", "existing": True,
                     "note": "An open RMA already exists for this order line; reusing it."}
-        next_id = self.db.execute("SELECT COALESCE(MAX(CAST(SUBSTR(rma_id, 5) AS INTEGER)), 7000) + 1 FROM rmas").fetchone()[0]
-        rma_id = f"RMA-{next_id}"
-        self.db.execute("INSERT INTO rmas VALUES (?,?,?,?,?,?,?,?,?,?)",
-                        (rma_id, order["order_id"], line["sku"], qty, reason, "approved", "2026-09-15", None, None,
-                         notes[:500]))
-        self.db.commit()
+        rma_id = self._insert_with_next_id(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(rma_id, 5) AS INTEGER)), 7000) + 1 FROM rmas", "RMA-{}",
+            "INSERT INTO rmas VALUES (?,?,?,?,?,?,?,?,?,?)",
+            lambda new_id: (new_id, order["order_id"], line["sku"], qty, reason, "approved", "2026-09-15", None, None,
+                            notes[:500]))
         self._audit("create_rma", rma_id, {"order_id": order["order_id"], "sku": line["sku"], "qty": qty, "reason": reason})
         return {"rma_id": rma_id, "status": "approved", "existing": False,
                 "instructions": "Customer ships within 15 days quoting the RMA number; returns without an RMA are "
@@ -248,9 +261,14 @@ class SupportDesk:
             raise ToolError(f"Partial refunds need a person: the refund due on {rma_id} is ${due:,.2f}. Issue the full "
                             "amount, or call escalate_to_human with queue='support_manager' if the customer asked for "
                             "a different amount.")
-        refund_id = f"RF-{rma_id[4:]}"
-        self.db.execute("INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?)",
-                        (refund_id, rma["order_id"], rma["rma_id"], amount, reason[:200], "agent", "issued", _now()))
+        refund_id = f"RF-{rma['rma_id'][4:]}"
+        try:
+            self.db.execute("INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?)",
+                            (refund_id, rma["order_id"], rma["rma_id"], amount, reason[:200], "agent", "issued",
+                             _now()))
+        except sqlite3.IntegrityError:            # a concurrent call refunded it first: the primary key says so
+            self.db.rollback()
+            raise ToolError(f"{rma_id} has already been refunded. Do not issue it again.") from None
         self.db.execute("UPDATE rmas SET status = 'refunded' WHERE rma_id = ?", (rma["rma_id"],))
         self.db.commit()
         self._audit("issue_refund", refund_id, {"rma_id": rma["rma_id"], "amount_usd": amount})
@@ -263,12 +281,10 @@ class SupportDesk:
         if priority not in PRIORITIES:
             raise ToolError("priority must be one of P1, P2, P3, P4.")
         me = self._requester_customer()
-        n = self.db.execute("SELECT COUNT(*) FROM escalations").fetchone()[0] + 4101
-        esc_id = f"ESC-{n}"
-        self.db.execute("INSERT INTO escalations VALUES (?,?,?,?,?,?,?,?)",
-                        (esc_id, me["customer_id"] if me else None, order_id, queue, priority, summary[:1000], _now(),
-                         "open"))
-        self.db.commit()
+        esc_id = self._insert_with_next_id(
+            "SELECT COUNT(*) + 4101 FROM escalations", "ESC-{}", "INSERT INTO escalations VALUES (?,?,?,?,?,?,?,?)",
+            lambda new_id: (new_id, me["customer_id"] if me else None, order_id, queue, priority, summary[:1000],
+                            _now(), "open"))
         self._audit("escalate_to_human", esc_id, {"queue": queue, "priority": priority})
         return {"escalation_id": esc_id, "queue": queue, "priority": priority, "sla": SLA[priority]}
 

@@ -224,3 +224,17 @@ def test_count_tokens_and_models(client):
     big = client.messages.count_tokens(model=OPUS, messages=[{"role": "user", "content": "hello " * 500}]).input_tokens
     assert big > small > 0
     assert client.models.retrieve(HAIKU).max_input_tokens == 200_000
+
+
+def test_fallback_turn_can_be_sent_back_in_a_tool_loop():
+    """A turn served by the fallback model (it starts with a `fallback` block and has no thinking) must be accepted
+    when appended verbatim, and the trace must bill both attempts."""
+    from kestrel.support_agent import run_support_agent
+    from labkit.tracing import Tracer
+
+    tracer = Tracer("t")
+    result = run_support_agent(get_client(), "[simulate:refusal] Where is our order SO-10303?",
+                               "jorge.medina@greenvalley-coop.example", tracer=tracer)
+    assert result.stop_reason == "end_turn" and result.turns >= 2
+    first = next(s for s in tracer.spans if s.name == "llm.call")
+    assert first.attributes["cost_usd"] > 0

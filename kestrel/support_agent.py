@@ -6,6 +6,7 @@ version), hardened on Day 6, and extended in the Day 7 capstone.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -80,9 +81,15 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
                       model: str = MODEL, desk: SupportDesk | None = None, max_turns: int = 12,
                       max_tokens: int = 8000, tracer: Tracer | None = None,
                       on_tool: Callable[[str, dict, str, bool], None] | None = None,
-                      system_prompt: str = SYSTEM_PROMPT, ticket_ref: str | None = None) -> AgentResult:
-    """Answer one customer email. Returns the reply plus a record of what the agent did."""
+                      system_prompt: str = SYSTEM_PROMPT, ticket_ref: str | None = None,
+                      tools: list[dict] | None = None) -> AgentResult:
+    """Answer one customer email. Returns the reply plus a record of what the agent did.
+
+    `tools` narrows the toolset for least privilege (e.g. read-only tools for a drafting mode): the model sees only
+    these, and a call to any other tool is refused without running it."""
     desk = desk or SupportDesk(requester_email, ticket_ref=ticket_ref)
+    tool_defs = tools if tools is not None else TOOLS
+    allowed = {t["name"] for t in tool_defs}
     messages: list[dict] = [{"role": "user", "content": message}]
     result = AgentResult(reply="")
     tracer = tracer or Tracer("support-agent")
@@ -90,7 +97,7 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
         model=model,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        tools=TOOLS,
+        tools=tool_defs,
         cache_control={"type": "ephemeral"},        # automatic caching of the growing conversation tail
         **fallback_kwargs(model),                   # server-side refusal fallbacks where supported
     )
@@ -138,7 +145,10 @@ def run_support_agent(client: anthropic.Anthropic, message: str, requester_email
             tool_results = []
             for block in tool_uses:           # all results go back in ONE user message
                 with tracer.span(f"tool.{block.name}", **{"tool.input": str(block.input)[:300]}) as span:
-                    content, is_error = desk.run(block.name, block.input)
+                    if block.name in allowed:
+                        content, is_error = desk.run(block.name, block.input)
+                    else:                                  # least privilege: not offered, so never executed
+                        content, is_error = json.dumps({"error": f"Tool {block.name!r} is not available here."}), True
                     if is_error:
                         span.error(content[:300])
                 if on_tool:

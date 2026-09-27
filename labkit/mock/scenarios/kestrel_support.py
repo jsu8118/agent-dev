@@ -427,4 +427,11 @@ def respond_support(req: MockRequest) -> Reply:
 @scenario("kestrel.support_agent",
           match=lambda r: r.has_tool("get_customer_profile") and r.has_tool("escalate_to_human"), priority=10)
 def kestrel_support(req: MockRequest) -> Reply:
-    return respond_support(req)
+    reply = respond_support(req)
+    # Like a real model, never call a tool the request didn't offer (e.g. an agent run with a read-only toolset).
+    missing = [b["name"] for b in reply.content if b.get("type") == "tool_use" and not req.has_tool(b["name"])]
+    if missing:
+        action = missing[0].replace("_", " ")
+        return say(f"I can't complete the next step ({action}) from here, so I've noted your request for a colleague, "
+                   "who will confirm it with you.")
+    return reply

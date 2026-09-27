@@ -245,10 +245,12 @@ def _validate_conversation(messages: list[dict], spec: ModelSpec, thinking_on: b
             # Thinking must be preserved in an active tool loop (only checked for turns the mock produced).
             is_last_assistant = all(m["role"] != "assistant" for _, m in merged[pos + 1:])
             produced_by_mock = any(str(t).startswith(signing.TOOL_ID_PREFIX) for t in tool_ids)
-            # A compaction block may precede the thinking block ([compaction, thinking, tool_use] is valid).
+            # A compaction block may precede the thinking block ([compaction, thinking, tool_use] is valid), and a
+            # turn served by a fallback model (it contains a `fallback` block) carries that model's thinking, if any.
             first = next((k for k, b in enumerate(blocks) if b.get("type") != "compaction"), 0)
-            if thinking_on and is_last_assistant and produced_by_mock and blocks[first].get("type") not in (
-                    "thinking", "redacted_thinking"):
+            served_by_fallback = any(b.get("type") == "fallback" for b in blocks)
+            if thinking_on and is_last_assistant and produced_by_mock and not served_by_fallback and \
+                    blocks[first].get("type") not in ("thinking", "redacted_thinking"):
                 raise bad_request(
                     f"messages.{orig_idx}.content.{first}.type: Expected `thinking` or `redacted_thinking`, but found "
                     f"`{blocks[first].get('type')}`. When thinking is enabled, a final `assistant` message must start with "
