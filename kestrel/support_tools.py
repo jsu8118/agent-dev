@@ -39,6 +39,15 @@ class ToolError(Exception):
     """An expected failure whose message tells the model how to recover."""
 
 
+# One answer for "not yours" AND "doesn't exist": if the two differed, anyone could probe which order, invoice or
+# RMA numbers exist (Policy PRV-004). The message still tells the model how to recover in both cases.
+NOT_ACCESSIBLE = ("Identity not verified for this account (Policy PRV-004), or the ID does not exist; both cases get "
+                  "this same answer so that IDs can't be probed. Do not share account details and do not guess other "
+                  "numbers. Ask the requester to double-check the ID and to give the order ID AND the customer's "
+                  "purchase order (PO) number, then call the tool again with customer_po, or ask them to write from "
+                  "their company email address.")
+
+
 def _now() -> str:
     return dt.datetime(2026, 9, 15, 9, 0, 0).isoformat() + "Z"   # the course's fixed "now"
 
@@ -67,9 +76,7 @@ class SupportDesk:
             row = self.db.execute("SELECT customer_po FROM orders WHERE order_id = ?", (order_id,)).fetchone()
             if row and row["customer_po"].strip().lower() == customer_po.strip().lower():
                 return
-        raise ToolError("Identity not verified for this account (Policy PRV-004). Do not share account details. "
-                        "Ask the requester for the order ID AND the customer's purchase order (PO) number, then call "
-                        "the tool again with customer_po, or ask them to write from their company email address.")
+        raise ToolError(NOT_ACCESSIBLE)
 
     def _order_row(self, order_id: str) -> sqlite3.Row:
         order_id = (order_id or "").strip().upper()
@@ -77,7 +84,7 @@ class SupportDesk:
             raise ToolError(f"'{order_id}' is not a valid order ID. Kestrel order IDs look like SO-10234.")
         row = self.db.execute("SELECT * FROM orders WHERE order_id = ?", (order_id,)).fetchone()
         if row is None:
-            raise ToolError(f"Order {order_id} not found. Ask the customer to double-check the order number.")
+            raise ToolError(NOT_ACCESSIBLE)
         return row
 
     def _line(self, order_id: str, sku: str) -> sqlite3.Row:
@@ -139,7 +146,7 @@ class SupportDesk:
     def get_invoice(self, invoice_id: str, customer_po: str | None = None) -> dict:
         row = self.db.execute("SELECT * FROM invoices WHERE invoice_id = ?", (invoice_id.strip().upper(),)).fetchone()
         if row is None:
-            raise ToolError(f"Invoice {invoice_id} not found. Kestrel invoice IDs look like AR-90123.")
+            raise ToolError(NOT_ACCESSIBLE)
         self._verify(row["customer_id"], row["order_id"], customer_po)
         paid, amount = row["paid_amount_usd"], row["amount_usd"]
         return {"invoice_id": row["invoice_id"], "order_id": row["order_id"], "issue_date": row["issue_date"],
@@ -150,7 +157,7 @@ class SupportDesk:
         row = self.db.execute("SELECT r.*, o.customer_id FROM rmas r JOIN orders o USING (order_id) WHERE rma_id = ?",
                               (rma_id.strip().upper(),)).fetchone()
         if row is None:
-            raise ToolError(f"RMA {rma_id} not found. RMA numbers look like RMA-7012.")
+            raise ToolError(NOT_ACCESSIBLE)
         self._verify(row["customer_id"])
         return {"rma_id": row["rma_id"], "order_id": row["order_id"], "sku": row["sku"], "qty": row["qty"],
                 "reason": row["reason_code"], "status": row["status"], "requested_at": row["requested_at"],
@@ -217,7 +224,7 @@ class SupportDesk:
         rma = self.db.execute("SELECT r.*, o.customer_id FROM rmas r JOIN orders o USING (order_id) WHERE rma_id = ?",
                               (rma_id.strip().upper(),)).fetchone()
         if rma is None:
-            raise ToolError(f"RMA {rma_id} not found. Refunds are issued against received RMAs only.")
+            raise ToolError(NOT_ACCESSIBLE)
         self._verify(rma["customer_id"])
         if rma["status"] == "refunded":
             raise ToolError(f"{rma_id} has already been refunded. Do not issue it again.")
@@ -353,9 +360,10 @@ TOOLS: list[dict] = [
            "notes": {"type": "string", "description": "Short description of the problem for the returns team"}},
           ["order_id", "sku", "qty", "reason"]),
     _tool("issue_refund",
-          "Issue a refund for an RMA whose items were received and inspected. You may approve refunds up to $2,500; "
-          "larger refunds are refused by this tool and must go to escalate_to_human (support_manager up to $10,000, "
-          "finance above). Never split a refund to get under the limit.",
+          "Use when get_rma shows an RMA whose items were received and inspected (status 'received', with a "
+          "refund_due_usd): issues that refund, in full, to the original payment method. You may approve refunds "
+          "whose amount due is up to $2,500; larger ones are refused by this tool and must go to escalate_to_human "
+          "(support_manager up to $10,000, finance above). Partial or split refunds are refused as well.",
           {"rma_id": {"type": "string"}, "amount_usd": {"type": "number", "description": "Refund amount in USD"},
            "reason": {"type": "string", "description": "Short justification"}},
           ["rma_id", "amount_usd", "reason"]),

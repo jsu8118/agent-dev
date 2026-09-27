@@ -523,18 +523,20 @@ policy so the model plans well, but enforcement lives in the tools.
 | Small results; KB passages capped; list limit ≤ 25 | results of each tool | context cost (§5.4) | raw rows |
 | Dispatcher whitelists tool names and catches `ToolError`/`TypeError` | `run()` | never call arbitrary attributes; never crash the loop | `getattr(self, name)` on anything |
 
-**What today's labs and exercises found in it.** Reading real code critically is part of the job:
+**What reviewing it found.** Reading real code critically is part of the job. When this course was built, the
+labs and exercises of this day found four defects in the first version of the toolset. All four are fixed in the
+version you have; the exercises walk through each finding and its fix:
 
-1. **Partial-refund bypass** (exercise 11). `issue_refund` chooses the approver from the *requested* amount. A
-   $2,400 refund against an RMA with $9,188.50 due is issued by the agent, and the RMA is marked refunded. The
-   approval level should follow the **refund due**, and partial refunds should go to a human.
-2. **ID enumeration.** An unverified sender gets "Order … not found" for a non-existent order but "Identity not
-   verified" for someone else's. The difference reveals which order numbers exist. Check ownership first and use
-   one message for both cases (exercise 12's fix does this).
-3. **The `max_tokens` retry doubles to 32,000 on a non-streaming call.** The SDK refuses that client-side (above
-   ~21,333). Cap at 16,000 or stream (exercise 10).
-4. `issue_refund`'s description states a precondition but no explicit trigger ("Use when…"). This is a lint
-   warning, not a bug.
+1. **Partial-refund bypass** (exercise 11). `issue_refund` chose the approver from the *requested* amount, so a
+   $2,400 refund against an RMA with $9,188.50 due was issued by the agent and the RMA was marked refunded. The
+   approval level now follows the **refund due**, and partial refunds go to a human.
+2. **ID enumeration.** An unverified sender got "Order … not found" for a non-existent order but "Identity not
+   verified" for someone else's, and the difference revealed which order numbers exist. Both cases now get one
+   message (`NOT_ACCESSIBLE` in `kestrel/support_tools.py`), as in exercise 12's fix.
+3. **The `max_tokens` retry doubled to 32,000 on a non-streaming call**, which the SDK refuses client-side (above
+   ~21,333). The retry now caps at 16,000 and hands over to a person beyond that (exercise 10).
+4. `issue_refund`'s description stated a precondition but no explicit trigger ("Use when…"). A lint warning rather
+   than a bug; the description now starts with the trigger.
 
 ---
 

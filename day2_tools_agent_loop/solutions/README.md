@@ -117,8 +117,9 @@ refused **client-side** by the SDK with `ValueError: Streaming is required for o
 10 minutes`. The SDK estimates 3,600 s × max_tokens / 128,000, and above ~21,333 tokens that exceeds 600 s. Cap
 non-streaming calls at 16,000, or switch to `client.messages.stream(...).get_final_message()` above the threshold.
 Setting an explicit client timeout disables the guard, but long idle connections can still drop, so stream
-instead. Kestrel's reference agent (`kestrel/support_agent.py`) has exactly this doubling-to-32,000 path. It has
-been reported for a fix, and exercise 10 shows the replacement.
+instead. Kestrel's reference agent (`kestrel/support_agent.py`) had exactly this doubling-to-32,000 path. It now
+caps the retry at 16,000 tokens (`MAX_TOKENS_CAP`) and hands over to a person beyond that; exercise 10 shows the
+pattern.
 
 ## C4. Runner or manual loop?
 
@@ -400,8 +401,8 @@ layers:
 
 1. **Schema contract** for every tool in both toolsets: strict, closed objects, `required ⊆ properties`, typed
    properties, and a description of at least 80 characters. The "does the description say *when*?" check is a
-   heuristic, so it **warns** instead of failing. It flags `issue_refund`, whose description states a precondition
-   but no trigger.
+   heuristic, so it **warns** instead of failing. It flagged `issue_refund`, whose description stated a precondition
+   but no trigger (fixed since: the description now starts with "Use when…").
 2. **Behaviour and error contract:** the happy path; a **context budget** (one order under 1,200 characters of
    JSON); **data minimisation** (no phone numbers or credit limits in results); instructive errors for the wrong
    kind of ID, malformed IDs and unknown IDs ("do not guess"); unknown tools and missing arguments come back as
@@ -413,9 +414,9 @@ layers:
 **What the "get around the limit" test finds.** It asks for a **$2,400 refund on RMA-7001**, whose refund due is
 $9,188.50 (Support Manager territory). `issue_refund` picks the approver from the *requested* amount, so $2,400 goes
 through as agent-approved, and the RMA is marked `refunded`, closing it with $6,788.50 unpaid. This is a policy
-bypass (RET-002 §6) that no prompt instruction can close. The test records it as an explicit **skip with a "KNOWN
-GAP" message**. That way the suite stays green today and turns into a normal passing test once the tool is fixed.
-The fix in `kestrel/support_tools.py` would be:
+bypass (RET-002 §6) that no prompt instruction can close. While the bug existed, the test recorded it as an explicit
+**skip with a "KNOWN GAP" message**, so the suite stayed green and the gap stayed visible. The fix below is now
+applied in `kestrel/support_tools.py`, and the test passes normally:
 
 ```python
 due = rma["refund_due_usd"]
@@ -464,8 +465,8 @@ because the caller is a language model reading untrusted email.
 
 * `get_order_status(order_id)` and `get_invoice(invoice_id)`: strict, documented, curated JSON, instructive errors.
   **Ownership is checked before anything is read**, with one message for "does not exist" and "not yours", so the
-  tools cannot be used to enumerate order numbers. (The reference toolset still distinguishes the two cases. That
-  was reported as a small hardening item.)
+  tools cannot be used to enumerate order numbers. (The reference toolset now does the same: see `NOT_ACCESSIBLE`
+  in `kestrel/support_tools.py`.)
 * `list_my_orders(status?, limit?)`: no customer argument (identity from the channel), a `status` enum, a limit
   capped at 10, newest first, and a note on how to get details.
 * **Refunds are not in this toolset.** They belong to the RMA workflow's `issue_refund`, with the limit enforced in

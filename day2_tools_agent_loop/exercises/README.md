@@ -156,7 +156,9 @@ guarantees of `kestrel/support_tools.py`. Cover at least:
 * instructive errors: wrong kind of ID, malformed ID, unknown ID, unknown tool, missing arguments;
 * idempotency of a write;
 * the refund limit, "refund happens once", and identity from the channel;
-* one test that tries to *get around* the refund limit. What does it find?
+* one test that tries to *get around* the refund limit, for example a partial refund below the limit on an RMA
+  whose refund due is above it. Does the guarantee hold? (The solutions explain what this test found in the first
+  version of the toolset.)
 
 ## H12. Critique and fix a badly designed tool (30 min)
 
