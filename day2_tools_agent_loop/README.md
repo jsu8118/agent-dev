@@ -471,9 +471,9 @@ next page") so the model does not treat a truncated list as complete.
 ### 5.6 Errors that instruct
 
 An error message is a prompt. `"ERROR"` teaches nothing. *"'AR-90263' is an invoice ID, not an order ID. Use
-get_invoice"* fixes the next call. *"A refund of $9,188.50 exceeds the agent approval limit of $2,500.00 and must be
-approved by the Support Manager. Do NOT retry or split it; call escalate_to_human with queue='support_manager'"*
-turns a policy refusal into the correct next action. A good error says what failed, why, and what to do next
+get_invoice"* fixes the next call. *"The refund due on RMA-7001 is $9,188.50, above the agent approval limit of
+$2,500.00; it must be approved by the Support Manager. Do NOT retry or split it; call escalate_to_human with
+queue='support_manager'"* turns a policy refusal into the correct next action. A good error says what failed, why, and what to do next
 (switch tools, ask the user, escalate, stop). It never leaks data it protects. A negative answer is not an error:
 "not shipped yet" is data, so return it as a normal result (exercise 9).
 
@@ -705,7 +705,7 @@ Gate B - the approval check lives INSIDE the tool function:
 ...
   no tools:                               9 tokens
   3 order-desk tools:                   809 tokens (+800)
-  11 reference support-agent tools:   2,089 tokens (+2,080)
+  11 reference support-agent tools:   2,122 tokens (+2,113)
 ```
 
 Question 5 is answered from earlier results, which is why they are kept in context and why their size matters.
@@ -720,11 +720,11 @@ Trajectory:
   -> get_rma({"rma_id": "RMA-7001"})
        ok {"rma_id": "RMA-7001", "order_id": "SO-10214", "sku": "KP-250-X", "qty": 1, "reason": "...
   -> issue_refund({"rma_id": "RMA-7001", "amount_usd": 9188.5, "reason": "Returned items receiv...)
-       ERROR A refund of $9,188.50 exceeds the agent approval limit of $2,500.00 and must be approved by the Support Manager. Do NOT retry or split it; call esc...
+       ERROR The refund due on RMA-7001 is $9,188.50, above the agent approval limit of $2,500.00; it must be approved by the Support Manager. Do NOT retry or s...
   -> escalate_to_human({"queue": "support_manager", "priority": "P3", "order_id": "SO-10214", "summa...)
        ok {"escalation_id": "ESC-4101", "queue": "support_manager", "priority": "P3", "sla": "res...
 ...
-average cost per ticket: $0.0265 (target < $0.40: met); escalated 3/7
+average cost per ticket: $0.0266 (target < $0.40: met); escalated 3/7
 ```
 
 The audit log shows `create_rma RMA-7023` and three escalations, each tagged with its ticket. The trace tree shows
