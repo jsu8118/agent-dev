@@ -1,0 +1,73 @@
+{
+  "recall_id": "RC-2026-03",
+  "issued": "2026-09-16",
+  "as_of": "2026-09-15",
+  "status": "active",
+  "title": "Field replacement campaign: seal lot PS-2608-B and KC-2 board lot VD-2607-C",
+  "lots": {
+    "PS-2608-B": {
+      "kind": "seal_lot",
+      "affects": [
+        "KP-100-S",
+        "KP-250-S"
+      ],
+      "hazard": "Elastomer batch cured out of specification. Cartridges may weep and then fail under thermal cycling above 80 C, releasing process fluid at the shaft. Safety-relevant on chemical, pharmaceutical, fire and offshore duty.",
+      "remedy": "Replace the seal cartridge with kit MS-250-R / MS-100-R (field visit, 2 h, skill seal_replacement).",
+      "interim": "Reduce seal-chamber temperature alarm to 70 C; do not run unattended on hazardous duty."
+    },
+    "VD-2607-C": {
+      "kind": "board_lot",
+      "affects": [
+        "KC-2"
+      ],
+      "hazard": "Undersized bulk capacitor on the power stage. Spurious F17 faults and uncommanded stops under supply dips; no fire risk, but loss of pumping.",
+      "remedy": "Replace the power-stage board with KC-2-PSB and load firmware 2.4.1 (field visit, 1.5 h, skill controller_firmware).",
+      "interim": "Enable auto-restart after F17 (manual section 9.1) where the process allows it."
+    }
+  },
+  "priority_rules": [
+    {
+      "risk_class": "safety",
+      "contact_within_business_days": 1,
+      "remedy_within_business_days": 5
+    },
+    {
+      "risk_class": "production",
+      "contact_within_business_days": 2,
+      "remedy_within_business_days": 10
+    },
+    {
+      "risk_class": "standard",
+      "contact_within_business_days": 3,
+      "remedy_within_business_days": 15
+    }
+  ],
+  "budget": {
+    "campaign_cap_usd": 30000,
+    "per_unit_cap_usd": 2200,
+    "goodwill_credit_max_without_approval_usd": 500,
+    "model_spend_cap_usd": 25.0
+  },
+  "approvals": {
+    "goodwill_credit_over_usd": 500,
+    "expedited_parts_shipping": "logistics lead",
+    "site_visit_outside_region": "field-service lead",
+    "any_customer_communication_mentioning_hazard_wording_changes": "quality lead"
+  },
+  "stop_conditions": [
+    "a customer reports an injury or a fluid release: stop the campaign for that lot and page the quality lead",
+    "parts stock for a remedy reaches zero: pause scheduling for that remedy",
+    "model spend reaches the cap: pause and report"
+  ],
+  "channels": {
+    "outreach": "email from recall@kestrel-pumps.example",
+    "escalation": "account manager, then phone"
+  },
+  "message_templates": {
+    "initial_notice": "TPL-RC-01",
+    "schedule_confirmation": "TPL-RC-02",
+    "reminder": "TPL-RC-03",
+    "completion": "TPL-RC-04"
+  },
+  "owner": "Quality lead (quality@kestrel-pumps.example)"
+}

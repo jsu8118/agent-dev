@@ -59,12 +59,19 @@ def load_scenarios() -> None:
         if _loaded:
             return
         from . import scenarios as package
-        for module in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
-            try:
-                importlib.import_module(f"{package.__name__}.{module.name}")
-            except Exception as exc:  # one broken scenario file must not take down every other lab
-                print(f"[labkit] WARNING: could not load mock scenario module {module.name!r}: {exc!r}",
-                      file=sys.stderr)
+        packages = [package]
+        try:                                   # the advanced course keeps its policies in advanced/mock_scenarios
+            import advanced.mock_scenarios as advanced_package
+            packages.append(advanced_package)
+        except ImportError:
+            pass
+        for pkg in packages:
+            for module in sorted(pkgutil.iter_modules(pkg.__path__), key=lambda m: m.name):
+                try:
+                    importlib.import_module(f"{pkg.__name__}.{module.name}")
+                except Exception as exc:  # one broken scenario file must not take down every other lab
+                    print(f"[labkit] WARNING: could not load mock scenario module {module.name!r}: {exc!r}",
+                          file=sys.stderr)
         _loaded = True
 
 

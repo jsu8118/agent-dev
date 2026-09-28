@@ -30,6 +30,7 @@ WORKDIR /course
 COPY requirements.txt pyproject.toml ./
 COPY labkit ./labkit
 COPY kestrel ./kestrel
+COPY advanced/__init__.py ./advanced/__init__.py
 RUN pip install -r requirements.txt
 
 COPY . .

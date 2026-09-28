@@ -1,0 +1,55 @@
+{
+  "name": "kestrel-docs",
+  "version": "1.9.0",
+  "publisher": "Kestrel Pumps & Controls (internal)",
+  "source": "git+ssh://git@git.kestrel-pumps.example/platform/mcp-docs.git",
+  "signature": "sha256:8ab2…ok",
+  "transport": "stdio",
+  "command": [
+    "kestrel-docs-mcp",
+    "--index",
+    "/srv/kb"
+  ],
+  "auth": "none (local)",
+  "tools": [
+    {
+      "name": "search_knowledge_base",
+      "description": "Full-text search over policies, manuals and bulletins with citations.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_document",
+      "description": "Full text of a document by ID.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    }
+  ]
+}

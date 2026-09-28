@@ -1,0 +1,79 @@
+{
+  "name": "kestrel-ops",
+  "version": "3.4.1",
+  "publisher": "Kestrel Pumps & Controls (internal)",
+  "source": "git+ssh://git@git.kestrel-pumps.example/platform/mcp-ops.git",
+  "signature": "sha256:1d9c…ok",
+  "transport": "streamable_http",
+  "url": "https://mcp.kestrel-pumps.example/ops",
+  "auth": "oauth2 (kestrel-sso)",
+  "tools": [
+    {
+      "name": "get_order",
+      "description": "Return one sales order with lines, status and promised date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_shipments_for_order",
+      "description": "All shipments created for an order.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "create_rma",
+      "description": "Open a return authorisation for delivered units (writes to the ERP).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "qty": {
+            "type": "integer"
+          },
+          "reason_code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id",
+          "sku",
+          "qty",
+          "reason_code"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+  "generated_for": "Day 5 capability-based authorization labs",
+  "tenants": [
+    {
+      "tenant_id": "kestrel",
+      "name": "Kestrel internal support",
+      "kind": "internal",
+      "customers": "*",
+      "channels": [
+        "email",
+        "internal_chat"
+      ],
+      "users": [
+        {
+          "user": "lena.ortiz",
+          "role": "support_manager"
+        },
+        {
+          "user": "sam.duarte",
+          "role": "support_agent"
+        },
+        {
+          "user": "quality.bot",
+          "role": "quality_lead"
+        }
+      ]
+    },
+    {
+      "tenant_id": "northgate",
+      "name": "Northgate HVAC Distributors partner portal",
+      "kind": "partner",
+      "customers": [
+        "C-1006"
+      ],
+      "channels": [
+        "portal"
+      ],
+      "users": [
+        {
+          "user": "kevin.oneill",
+          "role": "partner_admin"
+        },
+        {
+          "user": "ng.orders",
+          "role": "partner_user"
+        }
+      ]
+    },
+    {
+      "tenant_id": "keystone",
+      "name": "Keystone Mechanical (field-service contractor)",
+      "kind": "contractor",
+      "customers": [
+        "C-1016",
+        "C-1019"
+      ],
+      "channels": [
+        "portal",
+        "mobile"
+      ],
+      "users": [
+        {
+          "user": "luis.romero",
+          "role": "contractor_lead"
+        },
+        {
+          "user": "fse.contract.7",
+          "role": "contractor_engineer"
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "support_agent": {
+      "domains": [
+        "orders",
+        "logistics",
+        "billing",
+        "returns",
+        "field_service",
+        "products",
+        "knowledge",
+        "communications",
+        "customers"
+      ],
+      "max_risk": "write",
+      "approval_limits_usd": {
+        "issue_refund": 2500,
+        "issue_credit_note": 2500
+      }
+    },
+    "support_manager": {
+      "domains": "*",
+      "max_risk": "irreversible",
+      "approval_limits_usd": {
+        "issue_refund": 10000,
+        "issue_credit_note": 10000
+      }
+    },
+    "quality_lead": {
+      "domains": [
+        "quality",
+        "products",
+        "knowledge",
+        "communications",
+        "field_service"
+      ],
+      "max_risk": "write",
+      "approval_limits_usd": {}
+    },
+    "partner_admin": {
+      "domains": [
+        "orders",
+        "logistics",
+        "billing",
+        "returns",
+        "products",
+        "knowledge"
+      ],
+      "max_risk": "write",
+      "approval_limits_usd": {
+        "issue_refund": 0
+      },
+      "row_filter": "customer_id in tenant.customers"
+    },
+    "partner_user": {
+      "domains": [
+        "orders",
+        "logistics",
+        "products",
+        "knowledge"
+      ],
+      "max_risk": "read",
+      "row_filter": "customer_id in tenant.customers"
+    },
+    "contractor_lead": {
+      "domains": [
+        "field_service",
+        "products",
+        "knowledge",
+        "fleet"
+      ],
+      "max_risk": "write",
+      "row_filter": "customer_id in tenant.customers",
+      "denied_tools": [
+        "get_customer",
+        "list_contacts"
+      ]
+    },
+    "contractor_engineer": {
+      "domains": [
+        "field_service",
+        "products",
+        "knowledge"
+      ],
+      "max_risk": "read",
+      "row_filter": "customer_id in tenant.customers",
+      "denied_tools": [
+        "get_customer",
+        "list_contacts",
+        "list_customer_sites"
+      ]
+    }
+  },
+  "always_denied_to_agents": [
+    "update_contact",
+    "cancel_order",
+    "release_quality_hold"
+  ],
+  "approval_roles": {
+    "issue_refund": [
+      "support_manager",
+      "finance_director"
+    ],
+    "issue_credit_note": [
+      "support_manager"
+    ],
+    "cancel_order": [
+      "support_manager"
+    ],
+    "reroute_shipment": [
+      "support_manager"
+    ],
+    "open_quality_hold": [
+      "quality_lead"
+    ],
+    "set_reorder_point": [
+      "support_manager"
+    ],
+    "set_alert_threshold": [
+      "quality_lead"
+    ],
+    "reopen_rma": [
+      "support_manager"
+    ],
+    "apply_order_discount": [
+      "support_manager"
+    ],
+    "update_contact": [
+      "support_manager"
+    ],
+    "release_quality_hold": [
+      "quality_lead"
+    ]
+  }
+}

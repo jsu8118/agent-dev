@@ -20,7 +20,7 @@ service = ["fastapi>=0.110", "uvicorn>=0.29"]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
-include = ["labkit*", "kestrel*"]
+include = ["labkit*", "kestrel*", "advanced*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

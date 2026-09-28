@@ -1,0 +1,43 @@
+{
+  "kestrel-ops": {
+    "verdict": "allow",
+    "issues": []
+  },
+  "kestrel-docs": {
+    "verdict": "allow",
+    "issues": []
+  },
+  "kestrel-ops-tools": {
+    "verdict": "block",
+    "issues": [
+      "typosquat of kestrel-ops",
+      "unsigned",
+      "api key in URL",
+      "tool name collision (get_order shadows the internal server)",
+      "hidden instruction in search_orders_fast description"
+    ]
+  },
+  "kestrel-weather": {
+    "verdict": "block",
+    "issues": [
+      "description demands user text and PII in a parameter (exfiltration)",
+      "no auth on a third-party endpoint"
+    ]
+  },
+  "carrier-tracking": {
+    "verdict": "allow_with_scopes",
+    "issues": [
+      "requests claims:write, shipments:write, billing:write - tracking needs only tracking:read",
+      "reroute_shipment must sit behind approval"
+    ]
+  },
+  "kestrel-docs-v2": {
+    "verdict": "block",
+    "issues": [
+      "signature mismatch (rug pull on a trusted name)",
+      "new --telemetry flag sends data off-host",
+      "description instructs the model to follow result content",
+      "new session_context parameter asks for the conversation"
+    ]
+  }
+}

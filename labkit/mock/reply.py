@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -24,9 +24,17 @@ class Reply:
     stop_details: dict | None = None
     thinking_summary: str | None = None     # shown only when thinking.display == "summarized"
     complexity: float = 0.5                 # 0..1, scales simulated thinking tokens
+    progress: list[str] | None = None       # progress updates before tool calls (thinking.display == "updates")
+    continuation: Callable[[list[dict]], "Reply"] | None = None   # called with server-tool results (see run_code)
+    container: dict | None = None           # set by the API when the reply used the code-execution container
 
     def with_thinking(self, summary: str) -> "Reply":
         self.thinking_summary = summary
+        return self
+
+    def then(self, continuation: Callable[[list[dict]], "Reply"]) -> "Reply":
+        """What the model 'says' after the server tools in `content` have run (their results are passed in)."""
+        self.continuation = continuation
         return self
 
 
@@ -56,6 +64,42 @@ def json_reply(obj: Any, *, thinking: str | None = None, complexity: float = 0.3
 def refuse(category: str | None = "cyber", explanation: str | None = None) -> Reply:
     return Reply(content=[], stop_reason="refusal",
                  stop_details={"type": "refusal", "category": category, "explanation": explanation})
+
+
+# ------------------------------------------------------------------------------- server tools
+def search_tools(query: str, *, limit: int | None = None) -> dict:
+    """A tool-search call (server tool). `query` is a regex for the regex variant, natural language for BM25;
+    the renderer picks whichever search tool the request declared and fills in the results."""
+    block: dict[str, Any] = {"type": "server_tool_use", "name": "tool_search", "input": {"query": query}}
+    if limit is not None:
+        block["input"]["limit"] = limit
+    return block
+
+
+def run_code(code: str) -> dict:
+    """A Python cell for the code-execution container (programmatic tool calling when the code awaits tools).
+
+    The API runs it before the reply continues: use `Reply(...).then(lambda results: say(...))` to write text that
+    depends on the result (`results[-1]["content"]["stdout"]`).  When the code calls a client tool, the response
+    pauses with `tool_use` blocks carrying a `caller`; the scenario is dispatched again once the results are in,
+    with `req.completed_code` holding the finished cell.
+    """
+    return {"type": "server_tool_use", "name": "code_execution", "input": {"code": code}}
+
+
+def bash(command: str) -> dict:
+    """A shell command for the code-execution container (bash_code_execution)."""
+    return {"type": "server_tool_use", "name": "bash_code_execution", "input": {"command": command}}
+
+
+def create_file(path: str, file_text: str) -> dict:
+    """Create a file in the container (text_editor_code_execution, command 'create')."""
+    return {"type": "server_tool_use", "name": "text_editor_code_execution",
+            "input": {"command": "create", "path": path, "file_text": file_text}}
+
+
+def view_file(path: str) -> dict:
+    return {"type": "server_tool_use", "name": "text_editor_code_execution", "input": {"command": "view", "path": path}}
 
 
 def cite(doc: dict, quote: str) -> dict:

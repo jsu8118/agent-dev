@@ -487,7 +487,7 @@ ledger that rejects double ownership, unique constraints, or optimistic concurre
 
 | Failure | Mechanism | Lab 06 / exercises | Prevention |
 |---|---|---|---|
-| Cost multiplication | every subagent re-sends its prompt prefix, caches nothing it shares with the lead, and its report is read again by the lead | 1.45x input tokens, 1.55x cost for the same 12 pumps | delegate only bulk work; cheaper subagent models; measure tokens per unit of work |
+| Cost multiplication | every subagent re-sends its prompt prefix, caches nothing it shares with the lead, and its report is read again by the lead | 1.45x input tokens, 1.65x cost for the same 12 pumps | delegate only bulk work; cheaper subagent models; measure tokens per unit of work |
 | Context loss | the brief and the report compress what each side knows | ex. 7: a brief with a priority but no method | briefs with method and output contract; verbatim evidence in reports |
 | Duplicated work | overlapping assignments | ex. 7: 51% of a run's cost wasted | plan validation, assignment ledger, scoped tools |
 | Conflicting findings | two agents judge the same thing differently | ex. 7: bearing wear vs "sensor drift" | one owner per item; an evidence-based conflict rule; escalate to a human, don't re-spawn |
@@ -510,7 +510,7 @@ Lab 06 is deliberately on the losing side of that line, and the table says so (m
 ```
   architecture       issues right  faults found  false alarms  calls  input tok  output tok  cost     latency*  wall-clock  largest prompt
   A lead + analysts  12/12         5/5           0             11     32,693     4,779       $0.2374  69s       0.10s       5,813
-  B single agent     12/12         5/5           0             3      22,513     2,432       $0.1529  51s       0.04s       12,431
+  B single agent     12/12         5/5           0             3      22,513     2,432       $0.1435  51s       0.04s       12,431
 ```
 
 (`latency*` is the modelled critical path; `wall-clock` is measured and, in mock mode, near zero.) Twelve
@@ -626,7 +626,7 @@ standby pumps with a few test hours).
 tool (pre-computed views: weekly summary, daily means, hour-of-day profile, work orders).
 
 **Result (mock mode).** Both designs find all five faults with no false alarms; the multi-agent run
-costs 1.55x as much and takes longer, and its largest prompt is less than half the single agent's. For
+costs 1.65x as much and takes longer, and its largest prompt is less than half the single agent's. For
 12 pumps the single agent is the right design; the harness is ready for the fleet size where it stops
 being right.
 

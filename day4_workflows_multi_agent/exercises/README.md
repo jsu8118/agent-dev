@@ -46,7 +46,7 @@ Lab 06 printed (mock mode):
 ```
   architecture       issues right  faults found  false alarms  calls  input tok  output tok  cost     latency*  wall-clock  largest prompt
   A lead + analysts  12/12         5/5           0             11     32,693     4,779       $0.2374  69s       0.10s       5,813
-  B single agent     12/12         5/5           0             3      22,513     2,432       $0.1529  51s       0.04s       12,431
+  B single agent     12/12         5/5           0             3      22,513     2,432       $0.1435  51s       0.04s       12,431
 ```
 
 (`latency*` is the modelled critical path; wall-clock is measured and near zero in mock mode.)

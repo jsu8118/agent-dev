@@ -1,0 +1,52 @@
+{
+  "as_of": "2026-09-15",
+  "seed": 20260922,
+  "summary": {
+    "tools": {
+      "count": 120
+    },
+    "security": {
+      "attacks": 30,
+      "benign": 12,
+      "cases": 42,
+      "manifests": 6,
+      "tenants": 3
+    },
+    "traces": {
+      "traces": 480,
+      "reviewed": 154,
+      "pairs": 120,
+      "tickets": 62
+    },
+    "recall": {
+      "units": 11,
+      "customers": 7,
+      "engineers": 6,
+      "free_slots": 102,
+      "replies": 19,
+      "hostile_replies": 7
+    }
+  },
+  "files": [
+    "recall/affected_units.json",
+    "recall/campaign.json",
+    "recall/contacts.json",
+    "recall/engineers.json",
+    "recall/inbound_replies.jsonl",
+    "recall/parts.json",
+    "security/attacks.jsonl",
+    "security/mcp_manifests/carrier-tracking.json",
+    "security/mcp_manifests/kestrel-docs-v2.json",
+    "security/mcp_manifests/kestrel-docs.json",
+    "security/mcp_manifests/kestrel-ops-tools.json",
+    "security/mcp_manifests/kestrel-ops.json",
+    "security/mcp_manifests/kestrel-weather.json",
+    "security/mcp_manifests/labels.json",
+    "security/tenants.json",
+    "tools/catalog.json",
+    "traces/deployments.json",
+    "traces/pairwise_judgments.jsonl",
+    "traces/splits.json",
+    "traces/traces.jsonl"
+  ]
+}

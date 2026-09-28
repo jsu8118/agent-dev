@@ -44,6 +44,16 @@ class ModelSpec:
     cache_min_tokens: int = 1024         # shortest cacheable prefix
     refusal_classifiers: bool = False    # may return stop_reason "refusal" from safety classifiers
     server_fallbacks: bool = False       # supports `fallbacks="default"` (beta)
+    # --- advanced-course surfaces -------------------------------------------------
+    per_message_effort: bool = False     # {"role": "system", "content": [], "output_config": {"effort"}} (beta)
+    clear_at: bool = False               # turn-scoped system messages: clear_at "next_user_message" (beta)
+    inline_tools: bool = False           # tool_addition / tool_removal blocks in a system message (beta)
+    tool_search: bool = True             # tool_search_tool_regex / _bm25 server tools
+    code_execution: bool = True          # code_execution_* server tools
+    programmatic_tool_calling: bool = True   # tools callable from code (allowed_callers)
+    thinking_prefix_binding: str = "none"    # prefix check: "enforced" (400 on edits) | "recorded" (only when the
+                                             # request opts in via block_binding; the pre-2026-08-31-account behaviour) | "none"
+    thinking_family: str = "open"        # who can read this model's thinking blocks: "open" | "opus-5-5" | "fable-5-1"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -56,13 +66,16 @@ CATALOG: dict[str, ModelSpec] = {
             cache_read_multiplier=0.025, thinking_default="adaptive", disable_thinking="no",
             forced_tool_choice=False, mid_conversation_system=True, cache_min_tokens=512,
             refusal_classifiers=True, server_fallbacks=True,
-            notes=("thinking always on; control depth with effort", "forced tool_choice returns 400"),
+            per_message_effort=True, clear_at=True, inline_tools=True, thinking_prefix_binding="enforced",
+            thinking_family="fable-5-1",
+            notes=("thinking always on; control depth with effort", "forced tool_choice returns 400",
+                   "thinking blocks bound to the conversation prefix and readable only by Fable/Mythos 5.1"),
         ),
         ModelSpec(
             id="claude-fable-5", display_name="Claude Fable 5", tier="frontier",
             context_window=1_000_000, max_output=128_000, input_price=10.0, output_price=50.0,
             thinking_default="adaptive", disable_thinking="no", mid_conversation_system=True,
-            cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True,
+            cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True, inline_tools=True,
         ),
         ModelSpec(
             id="claude-opus-5-5", display_name="Claude Opus 5.5", tier="flagship",
@@ -70,19 +83,23 @@ CATALOG: dict[str, ModelSpec] = {
             cache_read_multiplier=0.05, thinking_default="adaptive", disable_thinking="no",
             default_effort="medium", forced_tool_choice=False, mid_conversation_system=True,
             cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True,
-            notes=("effort defaults to medium", "forced tool_choice returns 400"),
+            per_message_effort=True, clear_at=True, inline_tools=True, thinking_prefix_binding="recorded",
+            thinking_family="opus-5-5",
+            notes=("effort defaults to medium", "forced tool_choice returns 400",
+                   "thinking blocks readable only by Fable/Mythos 5.1"),
         ),
         ModelSpec(
             id="claude-opus-5", display_name="Claude Opus 5", tier="flagship",
             context_window=1_000_000, max_output=128_000, input_price=5.0, output_price=25.0,
             thinking_default="adaptive", disable_thinking="effort<=high", mid_conversation_system=True,
             cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True,
+            per_message_effort=True, clear_at=True, inline_tools=True,
             notes=("thinking on by default (adaptive)", "temperature/top_p/top_k rejected"),
         ),
         ModelSpec(
             id="claude-opus-4-8", display_name="Claude Opus 4.8", tier="flagship",
             context_window=1_000_000, max_output=128_000, input_price=5.0, output_price=25.0,
-            thinking_default="off", mid_conversation_system=True, cache_min_tokens=1024,
+            thinking_default="off", mid_conversation_system=True, cache_min_tokens=1024, inline_tools=True,
         ),
         ModelSpec(
             id="claude-opus-4-7", display_name="Claude Opus 4.7", tier="flagship",
@@ -112,7 +129,7 @@ CATALOG: dict[str, ModelSpec] = {
             context_window=200_000, max_output=64_000, input_price=1.0, output_price=5.0,
             thinking_default="off", supports_adaptive=False, budget_tokens="required",
             effort_levels=(), default_effort=None, sampling_params="yes", prefill=True,
-            cache_min_tokens=4096,
+            cache_min_tokens=4096, programmatic_tool_calling=False,
             notes=("thinking only via budget_tokens", "no effort parameter"),
         ),
     ]
@@ -158,3 +175,18 @@ def fallback_kwargs(model: str) -> dict:
     if known_model(model) and get_spec(model).server_fallbacks:
         return {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
     return {}
+
+
+def can_read_thinking(reader: str, producer: str) -> bool:
+    """Whether `reader` may see thinking blocks produced by `producer` (model binding).
+
+    Fable 5.1 / Mythos 5.1 blocks are readable only by Fable 5.1 / Mythos 5.1; Opus 5.5 blocks only by those two;
+    every other model's blocks are readable by any current model. A model that can't read a block has it dropped
+    by the API (unbilled) before generation.
+    """
+    if reader == producer:
+        return True
+    reader_spec, producer_spec = get_spec(reader), get_spec(producer)
+    if producer_spec.thinking_family in ("fable-5-1", "opus-5-5"):
+        return reader_spec.thinking_family == "fable-5-1"
+    return True

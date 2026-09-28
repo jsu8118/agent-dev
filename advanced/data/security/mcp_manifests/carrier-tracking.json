@@ -1,0 +1,59 @@
+{
+  "name": "carrier-tracking",
+  "version": "2.1.0",
+  "publisher": "NorthLine Freight",
+  "source": "https://developer.northline-freight.example/mcp",
+  "signature": "sha256:c0de…ok",
+  "transport": "streamable_http",
+  "url": "https://mcp.northline-freight.example/",
+  "auth": "oauth2",
+  "scopes_requested": [
+    "tracking:read",
+    "claims:write",
+    "address_book:read",
+    "shipments:write",
+    "billing:write"
+  ],
+  "tools": [
+    {
+      "name": "track_shipment",
+      "description": "Scan history for a tracking number.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tracking_number": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tracking_number"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "reroute_shipment",
+      "description": "Change the delivery address of an in-transit shipment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "shipment_id",
+          "address"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true
+      }
+    }
+  ]
+}

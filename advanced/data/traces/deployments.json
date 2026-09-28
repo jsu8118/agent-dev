@@ -1,0 +1,53 @@
+{
+  "as_of": "2026-09-15",
+  "arms": [
+    {
+      "arm": "baseline",
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "prompt_version": "v14",
+      "from": "2026-08-17",
+      "to": "2026-09-14",
+      "traffic": "100% until 2026-08-30, then 50%"
+    },
+    {
+      "arm": "opus-v15",
+      "model": "claude-opus-5",
+      "effort": "medium",
+      "prompt_version": "v15",
+      "from": "2026-08-31",
+      "to": "2026-09-14",
+      "traffic": "50% (A/B against baseline)"
+    },
+    {
+      "arm": "opus-v15-high",
+      "model": "claude-opus-5",
+      "effort": "high",
+      "prompt_version": "v15",
+      "from": "2026-09-07",
+      "to": "2026-09-14",
+      "traffic": "effort staircase, 1/3 of the opus arm"
+    },
+    {
+      "arm": "opus-v15-low",
+      "model": "claude-opus-5",
+      "effort": "low",
+      "prompt_version": "v15",
+      "from": "2026-09-07",
+      "to": "2026-09-14",
+      "traffic": "effort staircase, 1/3 of the opus arm"
+    },
+    {
+      "arm": "haiku-fastpath",
+      "model": "claude-haiku-4-5",
+      "effort": "medium",
+      "prompt_version": "v15",
+      "from": "2026-09-09",
+      "to": "2026-09-14",
+      "traffic": "canary: 30% of order_status and product_inquiry"
+    }
+  ],
+  "release_notes": {
+    "v15": "Reworded policy citations; added 'be brief' guidance; new instruction to hand off ambiguous returns to a colleague."
+  }
+}

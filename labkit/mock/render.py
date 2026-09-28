@@ -42,6 +42,14 @@ def _thinking_tokens(req: MockRequest, reply: Reply) -> int:
     return max(16, int(base * min(max(reply.complexity, 0.05), 1.0)))
 
 
+def _prefix_for_new_turn(req: MockRequest, compaction: dict | None) -> str:
+    """The prefix digest a thinking block generated now will be bound to (from the request as the client sent it)."""
+    raw = getattr(req, "raw_body", None) or req.body
+    if compaction is not None:                 # the new turn carries a compaction block: the prefix restarts there
+        return signing.prefix_digest({**raw, "messages": []}, 0)
+    return signing.prefix_digest(raw, len(raw.get("messages") or []))
+
+
 def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: str | None = None,
                   cleared_edits: list[dict] | None = None, compaction: dict | None = None) -> dict:
     content: list[dict] = []
@@ -49,6 +57,9 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
     stop_sequence = None
     budget = req.max_tokens
     output_tokens = 0
+    producer = model or req.model
+    prefix = _prefix_for_new_turn(req, compaction)
+    progress = list(reply.progress or [])
 
     if compaction is not None:
         content.append(compaction)
@@ -63,7 +74,8 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
             summary = ""
             if req.thinking_display == "summarized":
                 summary = reply.thinking_summary or "Reviewing the request and the available context, then deciding on the next step."
-            content.append({"type": "thinking", "thinking": summary, "signature": signing.sign(summary)})
+            content.append({"type": "thinking", "thinking": summary,
+                            "signature": signing.sign(summary, model=producer, prefix=prefix)})
             used = min(thinking_budget, budget)
             output_tokens += used
             budget -= used
@@ -74,6 +86,13 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
         for index, block in enumerate(reply.content):
             if stop_reason == "max_tokens":
                 break
+            if block["type"] == "tool_use" and req.thinking_active and req.thinking_display == "updates" \
+                    and index > 0 and reply.content[index - 1].get("type") != "thinking":
+                # Progress updates: a short thinking block before each tool call (thinking.display "updates").
+                note = progress.pop(0) if progress else f"Next, calling {block['name']} to get what the answer needs."
+                content.append({"type": "thinking", "thinking": note,
+                                "signature": signing.sign(note, model=producer, prefix=prefix)})
+                output_tokens += text_tokens(note)
             if block["type"] == "text":
                 text = block["text"]
                 for seq in stops:
@@ -90,8 +109,10 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
                 if stop_reason == "stop_sequence":
                     break
             elif block["type"] == "tool_use":
-                rendered = {"type": "tool_use", "id": _stable_tool_id(req, index, block),
+                rendered = {"type": "tool_use", "id": block.get("id") or _stable_tool_id(req, index, block),
                             "name": block["name"], "input": block.get("input") or {}}
+                if block.get("caller"):
+                    rendered["caller"] = block["caller"]
                 cost = json_tokens(rendered["input"]) + 8
                 if cost > budget:
                     rendered["input"] = {}       # cut off mid-generation: never run a truncated call
@@ -128,6 +149,8 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
         message["stop_details"] = reply.stop_details or {"type": "refusal", "category": None, "explanation": None}
     if cleared_edits:
         message["context_management"] = {"applied_edits": cleared_edits}
+    if reply.container is not None:
+        message["container"] = reply.container
     return message
 
 
@@ -145,7 +168,7 @@ def to_sse(message: dict) -> bytes:
 
     usage = message["usage"]
     start = {k: v for k, v in message.items() if k not in ("content", "stop_reason", "stop_sequence",
-                                                              "stop_details", "context_management")}
+                                                              "stop_details", "context_management", "container")}
     start.update({"content": [], "stop_reason": None, "stop_sequence": None,
                   "usage": {**usage, "output_tokens": 1}})
     emit("message_start", {"type": "message_start", "message": start})
@@ -172,10 +195,11 @@ def to_sse(message: dict) -> bytes:
                                                  "delta": {"type": "thinking_delta", "thinking": piece}})
             emit("content_block_delta", {"type": "content_block_delta", "index": index,
                                          "delta": {"type": "signature_delta", "signature": block["signature"]}})
-        elif kind == "tool_use":
-            emit("content_block_start", {"type": "content_block_start", "index": index,
-                                         "content_block": {"type": "tool_use", "id": block["id"],
-                                                           "name": block["name"], "input": {}}})
+        elif kind in ("tool_use", "server_tool_use"):
+            start_block = {"type": kind, "id": block["id"], "name": block["name"], "input": {}}
+            if block.get("caller"):
+                start_block["caller"] = block["caller"]
+            emit("content_block_start", {"type": "content_block_start", "index": index, "content_block": start_block})
             for piece in _chunks(json.dumps(block["input"], ensure_ascii=False), 32):
                 emit("content_block_delta", {"type": "content_block_delta", "index": index,
                                              "delta": {"type": "input_json_delta", "partial_json": piece}})

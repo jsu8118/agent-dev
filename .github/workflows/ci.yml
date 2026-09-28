@@ -24,5 +24,7 @@ jobs:
         run: |
           python data/generate_data.py
           git diff --exit-code -- data ':(exclude)data/kestrel_ops.db'
+          python advanced/data/generate_data.py
+          git diff --exit-code -- advanced/data
       - name: Tests (every lab and solution, in mock mode)
         run: python -m pytest -q

@@ -1,0 +1,180 @@
+{
+  "recall_id": "RC-2026-03",
+  "contacts": [
+    {
+      "customer_id": "C-1001",
+      "customer": "Bluewater Municipal Utilities",
+      "tier": "strategic",
+      "account_manager": "Priya Raman",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1001-1",
+        "name": "Dana Whitfield",
+        "email": "dana.whitfield@bluewater-utilities.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1001-2",
+        "name": "Diego Salas",
+        "email": "diego.salas@bluewater-utilities.example",
+        "role": "site engineer",
+        "channel": "phone",
+        "site_id": "SITE-1001-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1002",
+      "customer": "Cobalt Chemical Works",
+      "tier": "key",
+      "account_manager": "Priya Raman",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1002-1",
+        "name": "Marcus Hale",
+        "email": "marcus.hale@cobaltchem.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1002-2",
+        "name": "Mia Thornton",
+        "email": "mia.thornton@cobaltchem.example",
+        "role": "site engineer",
+        "channel": "email",
+        "site_id": "SITE-1002-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1005",
+      "customer": "Harbor Foods Processing",
+      "tier": "key",
+      "account_manager": "Lena Ortiz",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1005-1",
+        "name": "Aisha Karim",
+        "email": "aisha.karim@harborfoods.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1005-2",
+        "name": "Diego Salas",
+        "email": "diego.salas@harborfoods.example",
+        "role": "site engineer",
+        "channel": "email",
+        "site_id": "SITE-1005-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1012",
+      "customer": "Lumen Data Centers",
+      "tier": "key",
+      "account_manager": "Priya Raman",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1012-1",
+        "name": "Omar Haddad",
+        "email": "omar.haddad@lumen-dc.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1012-2",
+        "name": "Petra Novak",
+        "email": "petra.novak@lumen-dc.example",
+        "role": "site engineer",
+        "channel": "phone",
+        "site_id": "SITE-1012-A"
+      },
+      "notes": "Out of office until 2026-09-24; contact site engineer.",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1014",
+      "customer": "Midland Oil Services",
+      "tier": "key",
+      "account_manager": "Priya Raman",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1014-1",
+        "name": "Travis Greer",
+        "email": "travis.greer@midlandoil.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1014-2",
+        "name": "Beth Carver",
+        "email": "beth.carver@midlandoil.example",
+        "role": "site engineer",
+        "channel": "email",
+        "site_id": "SITE-1014-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1016",
+      "customer": "Keystone Mechanical Contractors",
+      "tier": "standard",
+      "account_manager": "Lena Ortiz",
+      "timezone": "America/New_York",
+      "language": "en",
+      "primary": {
+        "contact_id": "CT-1016-1",
+        "name": "Luis Romero",
+        "email": "luis.romero@keystone-mech.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1016-2",
+        "name": "Ken Adeyemi",
+        "email": "ken.adeyemi@keystone-mech.example",
+        "role": "site engineer",
+        "channel": "phone",
+        "site_id": "SITE-1016-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    },
+    {
+      "customer_id": "C-1025",
+      "customer": "Meridian Hotels & Resorts",
+      "tier": "standard",
+      "account_manager": "Henrik Vos",
+      "timezone": "Europe/Madrid",
+      "language": "es",
+      "primary": {
+        "contact_id": "CT-1025-1",
+        "name": "Lucia Fernandez",
+        "email": "lucia.fernandez@meridianhotels.example",
+        "role": "purchasing",
+        "channel": "email"
+      },
+      "site": {
+        "contact_id": "CT-1025-2",
+        "name": "Mia Thornton",
+        "email": "mia.thornton@meridianhotels.example",
+        "role": "site engineer",
+        "channel": "phone",
+        "site_id": "SITE-1025-A"
+      },
+      "notes": "",
+      "do_not_contact_before_utc": null
+    }
+  ]
+}

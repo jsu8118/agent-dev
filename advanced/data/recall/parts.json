@@ -1,0 +1,51 @@
+{
+  "as_of": "2026-09-15",
+  "kits": [
+    {
+      "sku": "MS-250-R",
+      "name": "Recall seal cartridge kit for KP-250 (lot PS-2609-A)",
+      "for_remedy": "seal_kit_replacement",
+      "fits": [
+        "KP-250-S",
+        "KP-250-X"
+      ],
+      "stock": {
+        "WH-EAST": 6,
+        "WH-WEST": 2,
+        "WH-EU": 3
+      },
+      "unit_cost_usd": 410.0,
+      "lead_time_days": 6
+    },
+    {
+      "sku": "MS-100-R",
+      "name": "Recall seal kit for KP-100 (lot PS-2609-A)",
+      "for_remedy": "seal_kit_replacement",
+      "fits": [
+        "KP-100-S"
+      ],
+      "stock": {
+        "WH-EAST": 1,
+        "WH-WEST": 0,
+        "WH-EU": 2
+      },
+      "unit_cost_usd": 190.0,
+      "lead_time_days": 6
+    },
+    {
+      "sku": "KC-2-PSB",
+      "name": "KC-2 power-stage board, revision D (firmware 2.4.1)",
+      "for_remedy": "controller_board_replacement",
+      "fits": [
+        "KC-2"
+      ],
+      "stock": {
+        "WH-EAST": 1,
+        "WH-WEST": 1,
+        "WH-EU": 0
+      },
+      "unit_cost_usd": 760.0,
+      "lead_time_days": 12
+    }
+  ]
+}

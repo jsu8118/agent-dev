@@ -15,6 +15,9 @@ from typing import Any
 
 from ..models import get_spec, known_model, thinking_active
 
+SERVER_TOOL_TYPES = ("tool_search_tool_regex_20251119", "tool_search_tool_bm25_20251119", "code_execution_20250825",
+                     "code_execution_20260120", "code_execution_20260521")
+
 
 @dataclass
 class ToolCall:
@@ -58,8 +61,9 @@ def _result_text(block: dict) -> str:
 
 
 class MockRequest:
-    def __init__(self, body: dict, headers: dict | None = None) -> None:
+    def __init__(self, body: dict, headers: dict | None = None, *, raw_body: dict | None = None) -> None:
         self.body = body
+        self.raw_body = raw_body if raw_body is not None else body   # as the client sent it (before server edits)
         self.headers = {k.lower(): v for k, v in (headers or {}).items()}
 
     # -- basic fields ------------------------------------------------------------
@@ -100,6 +104,7 @@ class MockRequest:
     # -- tools -------------------------------------------------------------------
     @property
     def tools(self) -> list[dict]:
+        """Every tool in the request, deferred ones included (what the API knows, not what the model sees)."""
         return self.body.get("tools") or []
 
     @cached_property
@@ -108,6 +113,80 @@ class MockRequest:
 
     def has_tool(self, *names: str) -> bool:
         return any(n in self.tool_names for n in names)
+
+    @cached_property
+    def deferred_tool_names(self) -> set[str]:
+        return {t.get("name") for t in self.tools if t.get("defer_loading") and t.get("name")}
+
+    @cached_property
+    def server_tools(self) -> dict[str, dict]:
+        """Server tools by kind: {"tool_search": def, "code_execution": def}."""
+        out: dict[str, dict] = {}
+        for t in self.tools:
+            kind = t.get("type") or ""
+            if kind.startswith("tool_search_tool_"):
+                out["tool_search"] = t
+            elif kind.startswith("code_execution_"):
+                out["code_execution"] = t
+        return out
+
+    @cached_property
+    def loaded_tool_names(self) -> set[str]:
+        """Tools the model can see right now: non-deferred ones, plus deferred ones discovered by tool search or
+        surfaced by a tool_addition, minus tools removed by a tool_removal (later changes win)."""
+        loaded = {t.get("name") for t in self.tools if t.get("name") and not t.get("defer_loading")}
+        for m in self.messages:
+            for b in _blocks(m.get("content")):
+                kind = b.get("type")
+                if kind == "tool_search_tool_result":
+                    for ref in (b.get("content") or {}).get("tool_references") or []:
+                        loaded.add(ref.get("tool_name"))
+                elif kind == "tool_result" and isinstance(b.get("content"), list):
+                    for sub in b["content"]:
+                        if isinstance(sub, dict) and sub.get("type") == "tool_reference":
+                            loaded.add(sub.get("tool_name"))
+                elif kind == "tool_addition":
+                    ref = b.get("tool") or {}
+                    name = ref.get("name") if ref.get("type") == "tool_reference" else (ref.get("definition") or {}).get("name")
+                    loaded.add(name)
+                elif kind == "tool_removal":
+                    loaded.discard((b.get("tool") or {}).get("name"))
+        loaded.discard(None)
+        return loaded
+
+    def is_loaded(self, name: str) -> bool:
+        return name in self.loaded_tool_names
+
+    @cached_property
+    def inline_tool_definitions(self) -> dict[str, dict]:
+        """Tools defined inline in tool_addition blocks (inline-tools beta), by name."""
+        out: dict[str, dict] = {}
+        for m in self.messages:
+            for b in _blocks(m.get("content")):
+                if b.get("type") == "tool_addition" and (b.get("tool") or {}).get("type") == "tool_definition":
+                    definition = b["tool"].get("definition") or {}
+                    if definition.get("name"):
+                        out[definition["name"]] = definition
+        return out
+
+    def tool_definition(self, name: str) -> dict | None:
+        for t in self.tools:
+            if t.get("name") == name:
+                return t
+        return self.inline_tool_definitions.get(name)
+
+    @cached_property
+    def code_callable_tools(self) -> dict[str, dict]:
+        """Tools a code cell may call (allowed_callers includes a code execution version)."""
+        return {t["name"]: t for t in self.tools
+                if t.get("name") and any(str(c).startswith("code_execution") for c in t.get("allowed_callers") or [])}
+
+    @property
+    def container_id(self) -> str | None:
+        container = self.body.get("container")
+        if isinstance(container, dict):
+            return container.get("id")
+        return container if isinstance(container, str) else None
 
     @property
     def tool_choice(self) -> dict | None:
@@ -127,9 +206,36 @@ class MockRequest:
 
     @property
     def effort(self) -> str:
+        """The effort in force for this turn: the latest per-message override, else the request's, else the default."""
         spec = self.spec
         default = spec.default_effort if spec else "high"
-        return self.output_config.get("effort") or default or "high"
+        level = self.output_config.get("effort") or default or "high"
+        for m in self.messages:
+            if m.get("role") == "system" and m.get("content") == [] and (m.get("output_config") or {}).get("effort"):
+                level = m["output_config"]["effort"]
+        return level
+
+    @property
+    def task_budget(self) -> int | None:
+        budget = self.output_config.get("task_budget") or {}
+        return budget.get("total") if isinstance(budget, dict) else None
+
+    @cached_property
+    def system_messages(self) -> list[str]:
+        """Text of mid-conversation system messages the model sees now: persistent ones, plus turn-scoped
+        (clear_at) ones that no later user message has cleared."""
+        messages = self.messages
+        last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+        out: list[str] = []
+        for i, m in enumerate(messages):
+            if m.get("role") != "system":
+                continue
+            if m.get("clear_at") == "next_user_message" and i < last_user:
+                continue
+            text = "\n".join(b.get("text", "") for b in _blocks(m.get("content")) if b.get("type") == "text")
+            if text.strip():
+                out.append(text)
+        return out
 
     @property
     def thinking(self) -> dict | None:
@@ -220,6 +326,52 @@ class MockRequest:
     def assistant_turns(self) -> int:
         return sum(1 for m in self.messages if m.get("role") == "assistant")
 
+    # -- server tools in the history ---------------------------------------------------
+    @cached_property
+    def code_results(self) -> list[dict]:
+        """Code-execution results in the history (python cells, bash, editor), oldest first."""
+        out: list[dict] = []
+        for m in self.messages:
+            if m.get("role") != "assistant":
+                continue
+            for b in _blocks(m.get("content")):
+                if b.get("type") in ("code_execution_tool_result", "bash_code_execution_tool_result",
+                                     "text_editor_code_execution_tool_result"):
+                    out.append(b)
+        return out
+
+    @property
+    def completed_code(self) -> dict | None:
+        """The code cell that just finished (set by the API when a paused cell resumes and completes), else None."""
+        return getattr(self, "_completed_code", None)
+
+    @cached_property
+    def tool_search_queries(self) -> list[dict]:
+        out: list[dict] = []
+        for m in self.messages:
+            if m.get("role") == "assistant":
+                for b in _blocks(m.get("content")):
+                    if b.get("type") == "server_tool_use" and str(b.get("name", "")).startswith("tool_search"):
+                        out.append(b.get("input") or {})
+        return out
+
+    @property
+    def pending_code_calls(self) -> list[ToolCall]:
+        """Client tool calls made from code (tool_use blocks with a `caller`) answered by the last user message."""
+        if not self.messages or self.messages[-1].get("role") != "user":
+            return []
+        answered = {b.get("tool_use_id") for b in _blocks(self.messages[-1].get("content")) if b.get("type") == "tool_result"}
+        out: list[ToolCall] = []
+        for m in self.messages:
+            if m.get("role") != "assistant":
+                continue
+            for b in _blocks(m.get("content")):
+                if b.get("type") == "tool_use" and b.get("caller") and b.get("id") in answered:
+                    call = next((c for c in self.tool_calls if c.id == b.get("id")), None)
+                    if call is not None:
+                        out.append(call)
+        return out
+
     @cached_property
     def documents(self) -> list[dict]:
         """Document / search_result blocks in user turns, in API order (document_index / search_result_index).
@@ -238,6 +390,13 @@ class MockRequest:
                     text = source.get("data", "")
                 elif source.get("type") == "content":
                     text = "\n".join(b.get("text", "") for b in source.get("content") or [] if isinstance(b, dict))
+                elif source.get("type") == "file":
+                    from .files import get_file_store
+                    try:
+                        stored = get_file_store().get(source.get("file_id", ""))
+                        text = stored.text() if stored.is_text else ""
+                    except Exception:
+                        text = ""
                 else:
                     text = ""
             else:

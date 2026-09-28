@@ -1,0 +1,3756 @@
+{
+  "generated_at": "2026-09-15",
+  "count": 120,
+  "domains": [
+    {
+      "name": "orders",
+      "description": "Sales orders and their lines.",
+      "tools": [
+        "get_order",
+        "list_orders",
+        "search_orders",
+        "get_order_lines",
+        "get_order_status_history",
+        "update_order_notes",
+        "hold_order",
+        "release_order_hold",
+        "cancel_order",
+        "apply_order_discount"
+      ]
+    },
+    {
+      "name": "logistics",
+      "description": "Shipments, carriers, customs.",
+      "tools": [
+        "get_shipment",
+        "track_shipment",
+        "list_shipments_for_order",
+        "get_carrier_rates",
+        "create_shipment",
+        "reroute_shipment",
+        "schedule_pickup",
+        "file_carrier_claim",
+        "get_customs_status",
+        "update_delivery_window"
+      ]
+    },
+    {
+      "name": "billing",
+      "description": "Invoices, payments, credits and refunds.",
+      "tools": [
+        "get_invoice",
+        "list_invoices",
+        "get_account_balance",
+        "get_credit_limit",
+        "get_payment_terms",
+        "record_payment",
+        "issue_credit_note",
+        "issue_refund",
+        "apply_late_fee_waiver",
+        "generate_statement"
+      ]
+    },
+    {
+      "name": "returns",
+      "description": "Return authorisations (RMAs).",
+      "tools": [
+        "get_rma",
+        "list_open_rmas",
+        "check_return_eligibility",
+        "get_restocking_fee",
+        "create_rma",
+        "update_rma_status",
+        "get_rma_inspection",
+        "schedule_return_pickup",
+        "close_rma",
+        "reopen_rma"
+      ]
+    },
+    {
+      "name": "field_service",
+      "description": "Warranty, service tickets and field engineers.",
+      "tools": [
+        "check_warranty",
+        "register_warranty",
+        "create_service_ticket",
+        "get_service_ticket",
+        "list_service_tickets",
+        "get_engineer_availability",
+        "schedule_field_visit",
+        "assign_engineer",
+        "get_service_history",
+        "close_service_ticket"
+      ]
+    },
+    {
+      "name": "inventory",
+      "description": "Stock, reservations and reorder points.",
+      "tools": [
+        "get_stock",
+        "list_low_stock",
+        "get_lead_time",
+        "get_reorder_point",
+        "set_reorder_point",
+        "reserve_stock",
+        "release_reservation",
+        "transfer_stock",
+        "get_warehouse",
+        "list_warehouses"
+      ]
+    },
+    {
+      "name": "products",
+      "description": "Catalog, compatibility, configuration and documentation.",
+      "tools": [
+        "get_product",
+        "search_products",
+        "get_price",
+        "get_bom",
+        "get_compatible_parts",
+        "get_datasheet",
+        "get_manual_section",
+        "list_product_revisions",
+        "get_configuration_options",
+        "validate_configuration"
+      ]
+    },
+    {
+      "name": "quality",
+      "description": "Build records, lots, holds and incidents.",
+      "tools": [
+        "get_build_record",
+        "list_units_by_lot",
+        "get_lot_summary",
+        "get_test_results",
+        "list_quality_holds",
+        "open_quality_hold",
+        "release_quality_hold",
+        "get_incident_report",
+        "create_incident_report",
+        "link_incident_to_lot"
+      ]
+    },
+    {
+      "name": "customers",
+      "description": "Accounts, contacts, sites and contracts.",
+      "tools": [
+        "get_customer",
+        "search_customers",
+        "list_contacts",
+        "update_contact",
+        "add_contact_note",
+        "get_account_manager",
+        "get_customer_tier",
+        "get_sla_terms",
+        "list_customer_sites",
+        "get_site"
+      ]
+    },
+    {
+      "name": "fleet",
+      "description": "Telemetry, alerts and fault codes from connected controllers.",
+      "tools": [
+        "get_pump_telemetry",
+        "get_vibration_trend",
+        "get_runtime_hours",
+        "list_fleet_alerts",
+        "get_alert",
+        "acknowledge_alert",
+        "get_fault_codes",
+        "decode_fault_code",
+        "set_alert_threshold",
+        "get_site_health"
+      ]
+    },
+    {
+      "name": "knowledge",
+      "description": "Policies, manuals, runbooks, bulletins and past incidents.",
+      "tools": [
+        "search_knowledge_base",
+        "get_document",
+        "list_policies",
+        "get_policy",
+        "get_runbook",
+        "search_incidents",
+        "list_bulletins",
+        "get_bulletin",
+        "get_faq",
+        "get_training_material"
+      ]
+    },
+    {
+      "name": "communications",
+      "description": "Outbound messages, approvals, tasks and hand-offs to people.",
+      "tools": [
+        "send_email",
+        "send_sms",
+        "post_teams_message",
+        "create_ticket_comment",
+        "notify_account_manager",
+        "request_approval",
+        "create_calendar_hold",
+        "create_task",
+        "log_call",
+        "escalate_to_human"
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_order",
+      "description": "Return one sales order with its lines, status, promised date and customer PO.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      },
+      "input_examples": [
+        {
+          "order_id": "SO-10248"
+        }
+      ]
+    },
+    {
+      "name": "list_orders",
+      "description": "List a customer's orders, newest first. Filter by status (open, shipped, delivered, cancelled).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "status": {
+            "type": "string",
+            "description": "Order status filter."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "search_orders",
+      "description": "Search orders by customer PO number, SKU or free text in the notes.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_order_lines",
+      "description": "Lines (SKU, qty, unit price, configured/special-order flags) of one order.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_order_status_history",
+      "description": "Every status change of an order with timestamps and actors.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "update_order_notes",
+      "description": "Append a note to the order (visible to logistics and billing).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "order_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "hold_order",
+      "description": "Put an unshipped order on hold (credit, quality or customer request).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "order_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "release_order_hold",
+      "description": "Release a held order back to fulfilment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "order_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "cancel_order",
+      "description": "Cancel an unshipped order or line. Irreversible; shipped lines must go through an RMA.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "line_no": {
+            "type": "integer",
+            "description": "Line number to cancel; omit to cancel the whole order."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "order_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "irreversible",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "apply_order_discount",
+      "description": "Apply a percentage discount to an open order (max 15% without approval).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "percent": {
+            "type": "number",
+            "description": "Discount percentage, 0-100."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "order_id",
+          "percent",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "orders",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "get_shipment",
+      "description": "Return a shipment: carrier, tracking number, ship date, ETA, delivered date, exception reason.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string",
+            "description": "Shipment ID, e.g. SH-50210."
+          }
+        },
+        "required": [
+          "shipment_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "track_shipment",
+      "description": "Live carrier tracking events for a tracking number (scan history, current location, exceptions).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "tracking_number": {
+            "type": "string",
+            "description": "Carrier tracking number, e.g. NLF1972237794."
+          }
+        },
+        "required": [
+          "tracking_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_shipments_for_order",
+      "description": "All shipments (including partials) created for one order.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "get_carrier_rates",
+      "description": "Quote carriers for a lane: origin warehouse, destination country, weight, service level.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          },
+          "country": {
+            "type": "string",
+            "description": "ISO country code."
+          },
+          "weight_kg": {
+            "type": "number",
+            "description": "Total weight in kg."
+          },
+          "service": {
+            "type": "string",
+            "description": "standard, express or freight."
+          }
+        },
+        "required": [
+          "warehouse",
+          "country",
+          "weight_kg"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_shipment",
+      "description": "Create a shipment for unshipped lines of an order from a warehouse with a carrier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          },
+          "carrier": {
+            "type": "string",
+            "description": "Carrier name."
+          },
+          "service": {
+            "type": "string",
+            "description": "standard, express or freight."
+          }
+        },
+        "required": [
+          "order_id",
+          "warehouse",
+          "carrier"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "reroute_shipment",
+      "description": "Change the delivery address of an in-transit shipment (carrier fee applies).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string",
+            "description": "Shipment ID, e.g. SH-50210."
+          },
+          "address": {
+            "type": "string",
+            "description": "New delivery address."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "shipment_id",
+          "address",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "schedule_pickup",
+      "description": "Book a carrier pickup at a warehouse or a customer site for a date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "Warehouse code or site ID."
+          },
+          "date": {
+            "type": "string",
+            "description": "ISO date, e.g. 2026-09-22."
+          },
+          "pieces": {
+            "type": "integer",
+            "description": "Number of pieces."
+          }
+        },
+        "required": [
+          "location",
+          "date",
+          "pieces"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "file_carrier_claim",
+      "description": "File a loss/damage claim with the carrier for a shipment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string",
+            "description": "Shipment ID, e.g. SH-50210."
+          },
+          "amount_usd": {
+            "type": "number",
+            "description": "Amount in US dollars."
+          },
+          "description": {
+            "type": "string",
+            "description": "What was lost or damaged."
+          }
+        },
+        "required": [
+          "shipment_id",
+          "amount_usd",
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_customs_status",
+      "description": "Customs clearance status and any duties owed for an international shipment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string",
+            "description": "Shipment ID, e.g. SH-50210."
+          }
+        },
+        "required": [
+          "shipment_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "update_delivery_window",
+      "description": "Set or change the requested delivery window communicated to the carrier.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "shipment_id": {
+            "type": "string",
+            "description": "Shipment ID, e.g. SH-50210."
+          },
+          "window_start": {
+            "type": "string",
+            "description": "ISO datetime."
+          },
+          "window_end": {
+            "type": "string",
+            "description": "ISO datetime."
+          }
+        },
+        "required": [
+          "shipment_id",
+          "window_start",
+          "window_end"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "logistics",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_invoice",
+      "description": "Return an invoice: amount, paid amount, due date, status, related order.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "string",
+            "description": "Invoice ID, e.g. AR-90210."
+          }
+        },
+        "required": [
+          "invoice_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "list_invoices",
+      "description": "List a customer's invoices; filter by status (open, paid, overdue, disputed).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "status": {
+            "type": "string",
+            "description": "Invoice status filter."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_account_balance",
+      "description": "Outstanding balance, overdue amount and days-past-due for a customer.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_credit_limit",
+      "description": "Credit limit, used credit and available credit for a customer.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_payment_terms",
+      "description": "Contractual payment terms (net days, early-payment discount) for a customer.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "record_payment",
+      "description": "Record a payment received against an invoice.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "string",
+            "description": "Invoice ID, e.g. AR-90210."
+          },
+          "amount_usd": {
+            "type": "number",
+            "description": "Amount in US dollars."
+          },
+          "reference": {
+            "type": "string",
+            "description": "Bank or cheque reference."
+          }
+        },
+        "required": [
+          "invoice_id",
+          "amount_usd",
+          "reference"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "issue_credit_note",
+      "description": "Issue a credit note against an invoice (reduces what the customer owes; no money moves).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "string",
+            "description": "Invoice ID, e.g. AR-90210."
+          },
+          "amount_usd": {
+            "type": "number",
+            "description": "Amount in US dollars."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "invoice_id",
+          "amount_usd",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "issue_refund",
+      "description": "Refund money to the customer's original payment method. Over $2,500 needs a support manager; over $10,000 the finance director.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "amount_usd": {
+            "type": "number",
+            "description": "Amount in US dollars."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          },
+          "rma_id": {
+            "type": "string",
+            "description": "RMA the refund settles, if any."
+          }
+        },
+        "required": [
+          "order_id",
+          "amount_usd",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "irreversible",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "apply_late_fee_waiver",
+      "description": "Waive late fees on an overdue invoice.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "string",
+            "description": "Invoice ID, e.g. AR-90210."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "invoice_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "generate_statement",
+      "description": "Generate a PDF account statement for a period and return a download link.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "from_date": {
+            "type": "string",
+            "description": "ISO date."
+          },
+          "to_date": {
+            "type": "string",
+            "description": "ISO date."
+          }
+        },
+        "required": [
+          "customer_id",
+          "from_date",
+          "to_date"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "billing",
+        "risk": "write",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_rma",
+      "description": "Return an RMA: order, SKU, qty, reason, status, refund due.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          }
+        },
+        "required": [
+          "rma_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_open_rmas",
+      "description": "Open RMAs for a customer or for all customers when customer_id is omitted.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "check_return_eligibility",
+      "description": "Apply the returns policy to a delivered line: window, restocking fee, exclusions (configured, special order).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity of units."
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "no_longer_needed, wrong_item, damaged_in_transit, defective, other."
+          }
+        },
+        "required": [
+          "order_id",
+          "sku",
+          "qty",
+          "reason_code"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "get_restocking_fee",
+      "description": "Restocking fee that would apply to a return, by product line and reason.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity of units."
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "Return reason code."
+          }
+        },
+        "required": [
+          "sku",
+          "qty",
+          "reason_code"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_rma",
+      "description": "Open a return authorisation for delivered units.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "description": "Sales order ID, e.g. SO-10248."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity of units."
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "Return reason code."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "order_id",
+          "sku",
+          "qty",
+          "reason_code"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "update_rma_status",
+      "description": "Move an RMA to a new status (approved, received, inspected, closed, rejected).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          },
+          "status": {
+            "type": "string",
+            "description": "New status."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "rma_id",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_rma_inspection",
+      "description": "Inspection findings for units received under an RMA.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          }
+        },
+        "required": [
+          "rma_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "schedule_return_pickup",
+      "description": "Book a carrier pickup for RMA units at the customer's site.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          },
+          "date": {
+            "type": "string",
+            "description": "ISO date, e.g. 2026-09-22."
+          }
+        },
+        "required": [
+          "rma_id",
+          "date"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "close_rma",
+      "description": "Close an RMA after refund or replacement is settled.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "rma_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "reopen_rma",
+      "description": "Reopen a closed RMA (disputes, late-found damage).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "rma_id": {
+            "type": "string",
+            "description": "Return authorisation ID, e.g. RMA-3007."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "rma_id",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "returns",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "check_warranty",
+      "description": "Warranty status of a unit by serial or of a SKU shipped on a date; includes advance-replacement eligibility.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "ship_date": {
+            "type": "string",
+            "description": "ISO date the unit shipped."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "register_warranty",
+      "description": "Register a unit's installation date to start its warranty clock.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          },
+          "date": {
+            "type": "string",
+            "description": "ISO date, e.g. 2026-09-22."
+          }
+        },
+        "required": [
+          "serial_number",
+          "site_id",
+          "date"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_service_ticket",
+      "description": "Open a field-service ticket for a site with a priority and a fault description.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          },
+          "priority": {
+            "type": "string",
+            "description": "P1 (safety/outage), P2 (production at risk), P3 (routine), P4 (information)."
+          },
+          "description": {
+            "type": "string",
+            "description": "Fault description, fault codes, symptoms."
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "customer_id",
+          "site_id",
+          "priority",
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_service_ticket",
+      "description": "Return a service ticket with its history and assigned engineer.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "description": "Service ticket ID, e.g. SVC-4021."
+          }
+        },
+        "required": [
+          "ticket_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_service_tickets",
+      "description": "Service tickets for a customer or site; filter by status.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          },
+          "status": {
+            "type": "string",
+            "description": "open, scheduled, closed."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_engineer_availability",
+      "description": "Free slots of field engineers in a region between two dates.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "type": "string",
+            "description": "US-EAST, US-WEST, EU, APAC."
+          },
+          "from_date": {
+            "type": "string",
+            "description": "ISO date."
+          },
+          "to_date": {
+            "type": "string",
+            "description": "ISO date."
+          },
+          "skill": {
+            "type": "string",
+            "description": "Required skill, e.g. seal_replacement, controller_firmware, atex."
+          }
+        },
+        "required": [
+          "region",
+          "from_date",
+          "to_date"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "schedule_field_visit",
+      "description": "Book an engineer slot for a service ticket at a site.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "description": "Service ticket ID, e.g. SVC-4021."
+          },
+          "engineer_id": {
+            "type": "string",
+            "description": "Field-service engineer ID, e.g. FSE-03."
+          },
+          "slot_start": {
+            "type": "string",
+            "description": "ISO datetime."
+          }
+        },
+        "required": [
+          "ticket_id",
+          "engineer_id",
+          "slot_start"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "assign_engineer",
+      "description": "Assign or reassign an engineer to a ticket without booking a slot.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "description": "Service ticket ID, e.g. SVC-4021."
+          },
+          "engineer_id": {
+            "type": "string",
+            "description": "Field-service engineer ID, e.g. FSE-03."
+          }
+        },
+        "required": [
+          "ticket_id",
+          "engineer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_service_history",
+      "description": "Past service visits and parts used for a serial number.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "serial_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "close_service_ticket",
+      "description": "Close a ticket with a resolution code and parts used.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "description": "Service ticket ID, e.g. SVC-4021."
+          },
+          "resolution": {
+            "type": "string",
+            "description": "Resolution code and summary."
+          },
+          "parts_used": {
+            "type": "array",
+            "description": "SKUs consumed.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "ticket_id",
+          "resolution"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "field_service",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_stock",
+      "description": "On-hand, reserved and available stock of a SKU per warehouse.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_low_stock",
+      "description": "SKUs at or below their reorder point in a warehouse.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "warehouse"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_lead_time",
+      "description": "Replenishment lead time in days for a SKU (from the supplier or the plant).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_reorder_point",
+      "description": "Reorder point and reorder quantity of a SKU in a warehouse.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          }
+        },
+        "required": [
+          "sku",
+          "warehouse"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "set_reorder_point",
+      "description": "Change the reorder point of a SKU in a warehouse.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          },
+          "reorder_point": {
+            "type": "integer",
+            "description": "New reorder point."
+          }
+        },
+        "required": [
+          "sku",
+          "warehouse",
+          "reorder_point"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "reserve_stock",
+      "description": "Reserve units for an order or a service ticket so they cannot be sold twice.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity of units."
+          },
+          "reference": {
+            "type": "string",
+            "description": "Order, RMA or ticket ID the reservation is for."
+          }
+        },
+        "required": [
+          "sku",
+          "warehouse",
+          "qty",
+          "reference"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "release_reservation",
+      "description": "Release a stock reservation.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "string",
+            "description": "Reservation ID, e.g. RSV-20081."
+          }
+        },
+        "required": [
+          "reservation_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "transfer_stock",
+      "description": "Move units between warehouses (creates an internal transfer order).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "from_warehouse": {
+            "type": "string",
+            "description": "Source warehouse code."
+          },
+          "to_warehouse": {
+            "type": "string",
+            "description": "Destination warehouse code."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity of units."
+          }
+        },
+        "required": [
+          "sku",
+          "from_warehouse",
+          "to_warehouse",
+          "qty"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_warehouse",
+      "description": "Warehouse address, cut-off times and carriers served.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "warehouse": {
+            "type": "string",
+            "description": "Warehouse code: WH-EAST, WH-WEST or WH-EU."
+          }
+        },
+        "required": [
+          "warehouse"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_warehouses",
+      "description": "All warehouses with their regions.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "inventory",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_product",
+      "description": "Product master data: name, line, list price, warranty months, lead time, returnable/configurable flags.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "search_products",
+      "description": "Search the catalog by name, family or application (e.g. 'ATEX pump 22 kW').",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_price",
+      "description": "Customer-specific price for a SKU (list price minus tier discount and contract pricing).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "sku",
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_bom",
+      "description": "Bill of materials (spare parts and their quantities) of a pump or controller SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_compatible_parts",
+      "description": "Spare parts and accessories compatible with a SKU or serial number.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_datasheet",
+      "description": "Datasheet link and key ratings (flow, head, power, materials) for a SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_manual_section",
+      "description": "A section of the installation/operation manual for a product family.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "family": {
+            "type": "string",
+            "description": "Product family, e.g. KP-250 or KC-2."
+          },
+          "section": {
+            "type": "string",
+            "description": "Section title or number, e.g. '6.2 Seal replacement'."
+          }
+        },
+        "required": [
+          "family",
+          "section"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_product_revisions",
+      "description": "Hardware/firmware revisions of a SKU with dates and change notes.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_configuration_options",
+      "description": "Configurable options (voltage, protocol, enclosure) of a controller SKU.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          }
+        },
+        "required": [
+          "sku"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "validate_configuration",
+      "description": "Validate a controller/pump configuration for compatibility before quoting.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "options": {
+            "type": "string",
+            "description": "JSON object of option name -> value."
+          }
+        },
+        "required": [
+          "sku",
+          "options"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "products",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_build_record",
+      "description": "Build record of a unit: SKU, order, build date, plant, seal lot, board lot, test result.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "serial_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "list_units_by_lot",
+      "description": "Every serial number built with a seal lot or board lot, with the order and customer each shipped to.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "lot": {
+            "type": "string",
+            "description": "Manufacturing lot, e.g. seal lot PS-2608-B or board lot VD-2607-C."
+          }
+        },
+        "required": [
+          "lot"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_lot_summary",
+      "description": "Units built, plants, date range and open incidents for a lot.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "lot": {
+            "type": "string",
+            "description": "Manufacturing lot, e.g. seal lot PS-2608-B or board lot VD-2607-C."
+          }
+        },
+        "required": [
+          "lot"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_test_results",
+      "description": "Factory acceptance test results (pressure, vibration, leak) of a unit.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "serial_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_quality_holds",
+      "description": "Open quality holds and the lots/SKUs they cover.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "open or released."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "open_quality_hold",
+      "description": "Block shipment of units of a lot or SKU pending investigation.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "lot": {
+            "type": "string",
+            "description": "Manufacturing lot, e.g. seal lot PS-2608-B or board lot VD-2607-C."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Product SKU, e.g. KP-250-S or MS-250."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason recorded in the audit log."
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "release_quality_hold",
+      "description": "Release a quality hold after investigation.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "hold_id": {
+            "type": "string",
+            "description": "Quality hold ID, e.g. QH-2026-014."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "hold_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "get_incident_report",
+      "description": "A quality incident report (field failure, root cause, corrective action).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "description": "Quality incident ID, e.g. INC-2026-031."
+          }
+        },
+        "required": [
+          "incident_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_incident_report",
+      "description": "Open a quality incident from a field failure.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What failed and how."
+          },
+          "severity": {
+            "type": "string",
+            "description": "low, medium, high, safety."
+          }
+        },
+        "required": [
+          "serial_number",
+          "summary",
+          "severity"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "link_incident_to_lot",
+      "description": "Associate an incident with a suspect lot for containment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "description": "Quality incident ID, e.g. INC-2026-031."
+          },
+          "lot": {
+            "type": "string",
+            "description": "Manufacturing lot, e.g. seal lot PS-2608-B or board lot VD-2607-C."
+          }
+        },
+        "required": [
+          "incident_id",
+          "lot"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "quality",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_customer",
+      "description": "Account profile: name, industry, tier, country, account manager, credit limit.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "search_customers",
+      "description": "Find customers by name, email domain or industry.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_contacts",
+      "description": "Contacts at a customer with roles, emails and phone numbers.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "update_contact",
+      "description": "Update a contact's email, phone or role.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "Contact ID, e.g. CT-1005-2."
+          },
+          "field": {
+            "type": "string",
+            "description": "email, phone or role."
+          },
+          "value": {
+            "type": "string",
+            "description": "New value."
+          }
+        },
+        "required": [
+          "contact_id",
+          "field",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "write",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "add_contact_note",
+      "description": "Add a note to a contact's CRM record.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "Contact ID, e.g. CT-1005-2."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "contact_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "write",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_account_manager",
+      "description": "Account manager and their contact details for a customer.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_customer_tier",
+      "description": "Service tier (strategic, key, standard) and what it entitles the customer to.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_sla_terms",
+      "description": "Contractual SLA: response times by priority, on-site hours, spares commitment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_customer_sites",
+      "description": "Sites (plants, pump stations) of a customer with addresses and time zones.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          }
+        },
+        "required": [
+          "customer_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_site",
+      "description": "One site: address, contacts, installed units, access instructions.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          }
+        },
+        "required": [
+          "site_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "customers",
+        "risk": "read",
+        "side_effect": false,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_pump_telemetry",
+      "description": "Latest readings (flow, head, power, vibration, seal temperature) for a unit.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "serial_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_vibration_trend",
+      "description": "Vibration RMS trend for a unit over a number of days.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "days": {
+            "type": "integer",
+            "description": "Look-back window in days."
+          }
+        },
+        "required": [
+          "serial_number",
+          "days"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_runtime_hours",
+      "description": "Total and since-last-service runtime hours of a unit.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          }
+        },
+        "required": [
+          "serial_number"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_fleet_alerts",
+      "description": "Open alerts for a customer or site, most severe first.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          },
+          "severity": {
+            "type": "string",
+            "description": "info, warning, critical."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_alert",
+      "description": "One fleet alert with the readings that triggered it.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "alert_id": {
+            "type": "string",
+            "description": "Fleet alert ID, e.g. ALR-88012."
+          }
+        },
+        "required": [
+          "alert_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "acknowledge_alert",
+      "description": "Acknowledge an alert with a note so it stops paging.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "alert_id": {
+            "type": "string",
+            "description": "Fleet alert ID, e.g. ALR-88012."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "alert_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_fault_codes",
+      "description": "Fault codes logged by a controller in the last N days.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "days": {
+            "type": "integer",
+            "description": "Look-back window in days."
+          }
+        },
+        "required": [
+          "serial_number",
+          "days"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "decode_fault_code",
+      "description": "Meaning, likely causes and recommended action for a controller fault code.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "fault_code": {
+            "type": "string",
+            "description": "Controller fault code, e.g. F17 or E42."
+          },
+          "family": {
+            "type": "string",
+            "description": "Controller family, KC-1 or KC-2."
+          }
+        },
+        "required": [
+          "fault_code"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "set_alert_threshold",
+      "description": "Change an alert threshold (e.g. vibration mm/s) for a unit.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "serial_number": {
+            "type": "string",
+            "description": "Unit serial number, e.g. KP250-2608-0002."
+          },
+          "metric": {
+            "type": "string",
+            "description": "vibration_rms, seal_temp_c, power_kw, flow_m3h."
+          },
+          "threshold": {
+            "type": "number",
+            "description": "New threshold."
+          }
+        },
+        "required": [
+          "serial_number",
+          "metric",
+          "threshold"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": true,
+        "core": false
+      }
+    },
+    {
+      "name": "get_site_health",
+      "description": "Roll-up of unit health, open alerts and runtime for a site.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "site_id": {
+            "type": "string",
+            "description": "Customer site ID, e.g. SITE-1005-A."
+          }
+        },
+        "required": [
+          "site_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "fleet",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "search_knowledge_base",
+      "description": "Full-text search across policies, manuals, runbooks and bulletins; returns passages with citations.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    },
+    {
+      "name": "get_document",
+      "description": "Full text of a knowledge-base document by ID.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "description": "Knowledge-base document ID, e.g. KB-0142."
+          }
+        },
+        "required": [
+          "document_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_policies",
+      "description": "Titles and IDs of customer-facing policies (returns, warranty, shipping, privacy).",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_policy",
+      "description": "A policy document by name (returns, warranty, shipping, refund_approval, data_handling).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Policy name."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_runbook",
+      "description": "An operations runbook by name (e.g. 'seal failure triage', 'recall outreach').",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Runbook name."
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "search_incidents",
+      "description": "Search past quality incidents and field failures by symptom, SKU or lot.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Free-text search query."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results (default 10)."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "list_bulletins",
+      "description": "Technical and safety bulletins issued in a period.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "ISO date."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_bulletin",
+      "description": "A technical or safety bulletin by ID (e.g. TSB-2026-09).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "bulletin_id": {
+            "type": "string",
+            "description": "Bulletin ID."
+          }
+        },
+        "required": [
+          "bulletin_id"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_faq",
+      "description": "Frequently asked questions and their approved answers for a topic.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "Topic, e.g. warranty, returns, atex."
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "get_training_material",
+      "description": "Training modules and videos for a product family or a task.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "Family or task."
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "knowledge",
+        "risk": "read",
+        "side_effect": false,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "send_email",
+      "description": "Send an email from support@kestrel-pumps.example. External side effect: cannot be unsent.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "Recipient email."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject line."
+          },
+          "body": {
+            "type": "string",
+            "description": "Plain-text body."
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "irreversible",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "send_sms",
+      "description": "Send a text message to a contact's mobile number.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "Contact ID, e.g. CT-1005-2."
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text, max 480 characters."
+          }
+        },
+        "required": [
+          "contact_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "irreversible",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "post_teams_message",
+      "description": "Post to an internal Teams channel (logistics, billing, quality, field-service).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Channel name."
+          },
+          "text": {
+            "type": "string",
+            "description": "Message text."
+          }
+        },
+        "required": [
+          "channel",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_ticket_comment",
+      "description": "Add an internal comment to a support or service ticket.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "description": "Service ticket ID, e.g. SVC-4021."
+          },
+          "text": {
+            "type": "string",
+            "description": "Comment text."
+          }
+        },
+        "required": [
+          "ticket_id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "notify_account_manager",
+      "description": "Notify the customer's account manager with a summary and a link.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Customer ID, e.g. C-1005."
+          },
+          "summary": {
+            "type": "string",
+            "description": "One-paragraph summary."
+          }
+        },
+        "required": [
+          "customer_id",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "request_approval",
+      "description": "Ask a named approver role to approve an action; returns an approval ID to poll.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "approver_role": {
+            "type": "string",
+            "description": "support_manager, finance_director, quality_lead, security."
+          },
+          "action": {
+            "type": "string",
+            "description": "What is being approved."
+          },
+          "justification": {
+            "type": "string",
+            "description": "Why."
+          }
+        },
+        "required": [
+          "approver_role",
+          "action",
+          "justification"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_calendar_hold",
+      "description": "Place a tentative hold on a person's calendar.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Email address."
+          },
+          "start": {
+            "type": "string",
+            "description": "ISO datetime."
+          },
+          "end": {
+            "type": "string",
+            "description": "ISO datetime."
+          },
+          "title": {
+            "type": "string",
+            "description": "Event title."
+          }
+        },
+        "required": [
+          "email",
+          "start",
+          "end",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "create_task",
+      "description": "Create a follow-up task for a team with a due date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "team": {
+            "type": "string",
+            "description": "Team name."
+          },
+          "title": {
+            "type": "string",
+            "description": "Task title."
+          },
+          "due_date": {
+            "type": "string",
+            "description": "ISO date."
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note."
+          }
+        },
+        "required": [
+          "team",
+          "title",
+          "due_date"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "log_call",
+      "description": "Log a phone call with a contact (summary and outcome).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "Contact ID, e.g. CT-1005-2."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Call summary."
+          }
+        },
+        "required": [
+          "contact_id",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": true,
+        "approval_required": false,
+        "core": false
+      }
+    },
+    {
+      "name": "escalate_to_human",
+      "description": "Hand the conversation to a human queue with a priority and a summary; ends the agent's involvement.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "queue": {
+            "type": "string",
+            "description": "Human queue: billing, logistics, security, quality, field_service, account_management."
+          },
+          "priority": {
+            "type": "string",
+            "description": "P1 (safety/outage), P2 (production at risk), P3 (routine), P4 (information)."
+          },
+          "summary": {
+            "type": "string",
+            "description": "What the human needs to know."
+          }
+        },
+        "required": [
+          "queue",
+          "priority",
+          "summary"
+        ],
+        "additionalProperties": false
+      },
+      "meta": {
+        "domain": "communications",
+        "risk": "write",
+        "side_effect": true,
+        "pii": false,
+        "approval_required": false,
+        "core": true
+      }
+    }
+  ]
+}
