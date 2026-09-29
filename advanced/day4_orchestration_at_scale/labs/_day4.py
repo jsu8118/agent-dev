@@ -510,9 +510,12 @@ def _now() -> str:
 
 class WorkQueue:
     """A SQLite work queue: `enqueue` is idempotent (task_id), `claim` is one atomic statement that takes the highest
-    priority queued task (or one whose lease expired), `complete` / `fail` release it, a task that exhausts its
-    attempts - or fails permanently - becomes a dead letter (status 'dead') for a human, and `results` is
-    append-only and keeps every attempt. The same file also holds `SharedRecord` documents."""
+    priority queued task (or one whose lease expired), oldest first, `complete` / `fail` release it, a task that
+    exhausts its attempts - or fails permanently - becomes a dead letter (status 'dead') for a human, and `results` is
+    append-only and keeps every attempt. The same file also holds `SharedRecord` documents.
+
+    "Oldest first" is insertion order (SQLite's rowid), not `created_at`: a producer that enqueues a batch writes
+    several rows in the same millisecond, and a timestamp tie would make the claim order vary from run to run."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
@@ -548,7 +551,7 @@ class WorkQueue:
             row = conn.execute(
                 "UPDATE tasks SET status = 'claimed', owner = ?, lease_until = ?, attempts = attempts + 1, "
                 "version = version + 1, updated_at = ? WHERE task_id = (SELECT task_id FROM tasks WHERE status = 'queued' "
-                "OR (status = 'claimed' AND lease_until < ?) ORDER BY priority DESC, created_at, task_id LIMIT 1) "
+                "OR (status = 'claimed' AND lease_until < ?) ORDER BY priority DESC, rowid LIMIT 1) "
                 "RETURNING *", (owner, now + lease_s, _now(), now)).fetchone()
             conn.execute("COMMIT")
         except Exception:
@@ -613,7 +616,7 @@ class WorkQueue:
         sql, args = "SELECT * FROM tasks", []
         if status:
             sql, args = sql + " WHERE status = ?", [status]
-        return [Task.from_row(r) for r in self._conn().execute(sql + " ORDER BY priority DESC, created_at, task_id", args)]
+        return [Task.from_row(r) for r in self._conn().execute(sql + " ORDER BY priority DESC, rowid", args)]
 
     def dead_letters(self) -> list[Task]:
         return self.tasks("dead")

@@ -189,8 +189,9 @@ def main() -> None:
     print("\n  The queue is one SQLite table. A claim is ONE atomic statement - no read-then-write race between workers:")
     print("    UPDATE tasks SET status='claimed', owner=?, lease_until=?, attempts=attempts+1, version=version+1")
     print("      WHERE task_id = (SELECT task_id FROM tasks WHERE status='queued' OR (status='claimed' AND lease_until < ?)")
-    print("                       ORDER BY priority DESC, created_at, task_id LIMIT 1) RETURNING *")
-    print("  Priority comes from the risk class (safety 2 > production 1 > standard 0); a claim expires with its lease.")
+    print("                       ORDER BY priority DESC, rowid LIMIT 1) RETURNING *")
+    print("  Priority comes from the risk class (safety 2 > production 1 > standard 0), then insertion order; a claim")
+    print("  expires with its lease.")
     queue.enqueue(STRAY, "unit_plan", {"serials": ["KP250-2608-0099"], "brief": "dry run"}, priority=0)
     print(f"  Already in the queue: {STRAY}, left by last week's dry run (KP250-2608-0099 is not an affected unit).")
 

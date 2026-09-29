@@ -101,7 +101,7 @@ class DeadLetterQueue(d4.WorkQueue):
 
     # ------------------------------------------------------------------ people
     def dead_letter_rows(self) -> list[dict]:
-        rows = self._conn().execute("SELECT * FROM dead_letters WHERE requeued_at IS NULL ORDER BY dead_at").fetchall()
+        rows = self._conn().execute("SELECT * FROM dead_letters WHERE requeued_at IS NULL ORDER BY dead_at, rowid").fetchall()
         return [{**dict(r), "errors": json.loads(r["errors"]), "payload": json.loads(r["payload"])} for r in rows]
 
     def requeue(self, task_id: str, *, by: str, note: str) -> bool:

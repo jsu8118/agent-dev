@@ -20,7 +20,6 @@ Solution: advanced/day4_orchestration_at_scale/solutions/ex09_dead_letter_queue.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "labs"))
@@ -30,7 +29,7 @@ from labkit import header, step  # noqa: E402
 
 import _day4 as d4  # noqa: E402
 
-LEASE_S = 0.05
+LEASE_S = 30.0                      # seconds on the harness's simulated clock (see drive())
 TASKS = [  # task id, payload, what the harness does to it
     ("unit:KP250-2608-0002", {"serials": ["KP250-2608-0002"]}, "healthy"),
     ("unit:KP250-2608-0099", {"serials": ["KP250-2608-0099"]}, "poison: the serial does not exist"),
@@ -98,15 +97,20 @@ def make_desk() -> d4.RecallDesk:
 
 
 def drive(queue: d4.WorkQueue, desk: d4.RecallDesk, *, fail, log=print) -> None:
-    """Claim, process, and on failure call `fail(task, error, error_class)`; a crash is left to the lease and reap()."""
+    """Claim, process, and on failure call `fail(task, error, error_class)`; a crash is left to the lease and reap().
+
+    The harness keeps its own clock - one second per claim - so every run is the same: a crashed task's lease
+    expires only once the queue has drained, when the supervisor's sweep (`reap`) runs."""
     process = make_worker(desk)
     for task_id, payload, _ in TASKS:
         queue.enqueue(task_id, "unit_plan", payload, max_attempts=3)
+    clock = 0.0
     while True:
-        task = queue.claim("worker-1", lease_s=LEASE_S)
+        clock += 1.0
+        task = queue.claim("worker-1", lease_s=LEASE_S, now=clock)
         if task is None:
-            time.sleep(LEASE_S * 1.5)
-            if not queue.reap():
+            clock += LEASE_S                                  # nothing to claim: wait out any lease, then sweep
+            if not queue.reap(now=clock):
                 return
             continue
         try:

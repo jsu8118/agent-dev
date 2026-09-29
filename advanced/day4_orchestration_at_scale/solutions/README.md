@@ -112,7 +112,8 @@ has begun responding (advanced Day 3).
   20-minute lease means a 20-minute outage when its worker dies. Renewing every third of the lease tolerates two missed
   beats (a slow network, a short pause). The heartbeat renews both the queue lease and the durable run's lease.
 * **A failed heartbeat stops the worker before its next side effect.** The executor checks a "lease lost" flag before
-  every tool call; a live-but-late worker abandons instead of racing its successor.
+  every tool call; a live-but-late worker abandons instead of racing its successor. The Day 1 runtime does this for the
+  run's own lease: a failed `heartbeat()` makes `DurableRunner` raise `LeaseLost` before its next model call.
 * **Fencing tokens.** Every claim increments a token (the task's version); the worker passes it with each side effect,
   and the desk, wrapping the non-idempotent calendar API, keeps the highest token seen per unit and refuses lower ones.
   In the simulation worker-A pauses for 90 s holding T1 (token 1), the supervisor re-queues T1 at t=65 s, worker-B

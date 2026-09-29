@@ -296,7 +296,7 @@ def main() -> None:
     seq = [f"{e['name']}({e['input'].get('serial', '')})" for e in store.events(run.id, types=("tool.started",))]
     print(f"  calls: {' -> '.join(seq)}")
     print(f"  outcome: {'completed' if result else 'KILLED'} -> {run.status}: {run.error}")
-    print(f"  ping-pong between agents (message-level): ", end="")
+    print("  ping-pong between agents (message-level): ", end="")
     verdict = None
     for sender, receiver, payload in [("coordinator", "worker-1", {"ask": "clarify slot"}), ("worker-1", "coordinator", {"ask": "which unit?"}),
                                       ("coordinator", "worker-1", {"ask": "clarify slot"}), ("worker-1", "coordinator", {"ask": "which unit?"})]:

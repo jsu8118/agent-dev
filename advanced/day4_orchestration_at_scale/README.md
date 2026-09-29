@@ -146,7 +146,8 @@ the results table keeps every completed attempt, append-only, and the record can
 merge policy: the latest completed attempt of a task wins; counters are never trusted on their own). Leases add a
 subtle failure: a worker that was only *slow* wakes up after its task was re-delivered. The queue refuses its
 `complete()` (it no longer owns the task), and exercise 6 adds **fencing tokens** so that the system of record refuses
-its side effects too.
+its side effects too. The Day 1 runtime applies the same rule to a run's own lease: when `heartbeat()` finds that
+another worker now holds the run, `DurableRunner` raises `LeaseLost` before its next model call instead of writing on.
 
 **Kestrel.** Lab 02 runs two worker threads over eleven tasks and makes the first two record writes collide on purpose:
 the invariants hold every time (eleven tasks claimed once, record version 12 = 1 + 11 writes, no slot booked twice),
