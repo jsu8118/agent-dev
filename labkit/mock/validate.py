@@ -498,7 +498,10 @@ def _validate_conversation(messages: list[dict], body: dict, spec: ModelSpec, th
             served_by_fallback = any(b.get("type") == "fallback" for b in blocks)
             first = next((k for k, b in enumerate(blocks) if b.get("type") != "compaction"), 0)
             had_thinking_dropped = any(i == orig_idx for i, _ in dropped)
-            if thinking_on and is_last_assistant and produced_by_mock and not served_by_fallback \
+            # A response that only re-paused a code cell (code-issued tool_use blocks) carries no model reasoning.
+            only_code_calls = all(b.get("type") in ("server_tool_use", "code_execution_tool_result") or
+                                  (b.get("type") == "tool_use" and b.get("caller")) for b in blocks[first:])
+            if thinking_on and is_last_assistant and produced_by_mock and not served_by_fallback and not only_code_calls \
                     and not had_thinking_dropped and blocks[first].get("type") not in ("thinking", "redacted_thinking"):
                 raise bad_request(
                     f"messages.{orig_idx}.content.{first}.type: Expected `thinking` or `redacted_thinking`, but found "

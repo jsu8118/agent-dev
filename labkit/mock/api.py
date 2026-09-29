@@ -198,8 +198,9 @@ class MockAnthropicAPI:
             sandbox.provide_results(container, [(c.name, c.input, c.result or "") for c in req.pending_code_calls])
             outcome = sandbox.resume(container)
             cell = container.paused_cell or {}
-            if outcome.paused:
-                reply = Reply(content=self._pending_tool_uses(cell.get("id") or "", outcome.calls), stop_reason="tool_use")
+            if outcome.paused:                        # the cell asked for more tools: no model work, so no thinking
+                reply = Reply(content=self._pending_tool_uses(cell.get("id") or "", outcome.calls), stop_reason="tool_use",
+                              complexity=0.0)
                 reply.container = container.info()
                 message = build_message(req, reply, cache, cleared_edits=applied_edits)
                 return self._finish(message, betas, verdict, spec)
@@ -346,6 +347,7 @@ class MockAnthropicAPI:
             # The model keeps going after a server tool returns: ask the scenario what comes next.
             body = {**req.body, "messages": list(req.messages) + [{"role": "assistant", "content": list(out)}]}
             follow_req = MockRequest(body, req.headers, raw_body=req.raw_body)
+            follow_req._partial_response = list(out)
             if out[-1].get("type") == "code_execution_tool_result":
                 follow_req._completed_code = out[-1]
             _, follow = dispatch(follow_req)

@@ -102,6 +102,8 @@ def render_positions(body: dict) -> list[tuple[str, int, dict | None]]:
     messages = body.get("messages") or []
     last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
     surfaced: set[str] = set()
+    code_called = {b.get("id") for m in messages if m.get("role") == "assistant" and isinstance(m.get("content"), list)
+                   for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("caller")}
     for m_index, message in enumerate(messages):
         role = message.get("role", "")
         content = message.get("content")
@@ -115,6 +117,9 @@ def render_positions(body: dict) -> list[tuple[str, int, dict | None]]:
             tokens = block_tokens(block) + (MESSAGE_OVERHEAD if i == 0 else 0)
             if cleared:
                 tokens = 0                       # still part of the prefix, but renders nothing
+            if isinstance(block, dict) and ((block.get("type") == "tool_use" and block.get("caller"))
+                                            or (block.get("type") == "tool_result" and block.get("tool_use_id") in code_called)):
+                tokens = 0                       # programmatic tool calling: these go to the code cell, not the model
             control = block.get("cache_control") if isinstance(block, dict) else None
             if isinstance(block, dict) and block.get("type") == "tool_result" and isinstance(block.get("content"), list):
                 control = control or next((b.get("cache_control") for b in block["content"]

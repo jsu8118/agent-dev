@@ -64,7 +64,7 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
     if compaction is not None:
         content.append(compaction)
 
-    has_tool_use = any(b.get("type") == "tool_use" for b in reply.content)
+    has_tool_use = any(b.get("type") == "tool_use" and not b.get("caller") for b in reply.content)
     adaptive = (req.thinking or {}).get("type", "adaptive") == "adaptive"
     trivial = adaptive and reply.complexity < 0.15 and not has_tool_use   # adaptive thinking may skip easy turns
 
@@ -113,7 +113,7 @@ def build_message(req: MockRequest, reply: Reply, cache: CacheResult, *, model: 
                             "name": block["name"], "input": block.get("input") or {}}
                 if block.get("caller"):
                     rendered["caller"] = block["caller"]
-                cost = json_tokens(rendered["input"]) + 8
+                cost = 0 if block.get("caller") else json_tokens(rendered["input"]) + 8   # code-issued calls are not model output
                 if cost > budget:
                     rendered["input"] = {}       # cut off mid-generation: never run a truncated call
                     cost, stop_reason = budget, "max_tokens"

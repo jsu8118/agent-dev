@@ -345,6 +345,16 @@ class MockRequest:
         """The code cell that just finished (set by the API when a paused cell resumes and completes), else None."""
         return getattr(self, "_completed_code", None)
 
+    @property
+    def partial_response(self) -> list[dict]:
+        """Blocks already generated in the response being built (searches, results, text), when the policy is asked
+        what comes next after a server tool ran in the same response; [] on a fresh turn."""
+        return list(getattr(self, "_partial_response", None) or [])
+
+    @property
+    def continuing_response(self) -> bool:
+        return bool(getattr(self, "_partial_response", None))
+
     @cached_property
     def tool_search_queries(self) -> list[dict]:
         out: list[dict] = []

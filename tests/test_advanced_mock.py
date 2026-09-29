@@ -404,3 +404,26 @@ def test_managed_agents_versions_mounts_budget_resume_and_cached_history(client)
     resumed = client.beta.sessions.update(session.id, budget={"type": "limit", "max_list_cost": {"amount": "5000", "currency": "USD"}})
     final = [e for e in client.beta.sessions.events.list(session.id) if e.type == "session.status_idle"][-1]
     assert final.stop_reason.type == "end_turn" and resumed.usage.cache_read_input_tokens > 0     # the history was cached
+
+
+def test_programmatic_tool_calls_are_not_billed_as_model_tokens(client):
+    from labkit.mock.cache import render_positions
+    from labkit.mock.render import build_message
+    from labkit.mock.cache import CacheResult
+    called = {"type": "tool_use", "id": "toolu_x", "name": "get_order", "input": {"order_id": "SO-1"},
+              "caller": {"type": "code_execution_20260120", "tool_id": "srvtoolu_1"}}
+    direct = {"type": "tool_use", "id": "toolu_y", "name": "get_order", "input": {"order_id": "SO-1"}}
+    body = {"model": OPUS, "max_tokens": 10, "messages": [
+        {"role": "user", "content": "total?"},
+        {"role": "assistant", "content": [{"type": "server_tool_use", "id": "srvtoolu_1", "name": "code_execution", "input": {"code": "x"}}, called]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_x", "content": "{\"total\": 10}" * 50}]}]}
+    positions = render_positions(body)
+    assert positions[-1][1] == 0 and positions[-2][1] == 0                    # the code-called use and its result cost nothing
+    body["messages"][1]["content"][1] = direct
+    body["messages"][2]["content"][0]["tool_use_id"] = "toolu_y"
+    assert render_positions(body)[-1][1] > 0                                  # a model-issued call is billed as usual
+    req = MockRequest({"model": OPUS, "max_tokens": 4000, "messages": [{"role": "user", "content": "hi"}]})
+    empty = CacheResult(positions=[], hits=0, read_tokens=0, write_tokens_5m=0, write_tokens_1h=0, uncached_tokens=5) \
+        if "positions" in CacheResult.__dataclass_fields__ else mock_api().cache.process(req.body, req.spec)
+    paused = build_message(req, Reply(content=[called], stop_reason="tool_use", complexity=0.0), empty)
+    assert paused["usage"]["output_tokens"] == 0 and paused["content"][0]["type"] == "tool_use"   # no thinking, no output charge
