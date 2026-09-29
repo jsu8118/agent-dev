@@ -7,6 +7,7 @@ all eight probes plus one of your own, then measure what the richer contract cos
 
 Run
     python advanced/day3_long_horizon_context/exercises/ex11_summary_contract.py
+    Live, this replays the 40-turn day twice (about $3 on Claude Opus 5); the solution replays it four times.
 
 TODO
     1. Extend SUMMARY_INSTRUCTIONS so the summary keeps the facts the heatsink probe needs.

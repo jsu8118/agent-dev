@@ -13,6 +13,7 @@ Concepts
 
 Run
     python advanced/day3_long_horizon_context/solutions/ex11_summary_contract.py
+    Live, this replays the 40-turn day four times (about $6 on Claude Opus 5).
 
 What to observe
     * With lab 02's contract both strategies miss the heatsink and the fan-counter probes.

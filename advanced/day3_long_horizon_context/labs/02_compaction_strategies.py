@@ -17,7 +17,7 @@ Concepts
 
 Run
     python advanced/day3_long_horizon_context/labs/02_compaction_strategies.py [--strategies none,truncate,...]
-    Live, all six runs cost about $10 on Claude Opus 5; pick fewer strategies to spend less.
+    Live, all six runs cost about $12 on Claude Opus 5; pick fewer strategies to spend less.
 
 What to observe
     * The baseline answers all eight probes and ends the day at ~64K tokens; every strategy trades some of that.
