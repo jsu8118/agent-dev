@@ -66,7 +66,7 @@ streaming validator.
 real: tool search runs over the definitions as documented, cache accounting follows the API's rules, and code
 cells run in a local sandbox and pause like the API. The *choices* are a rule-based stand-in: which tool, which
 search query and which code. Every lab says so in `[mock]` lines wherever that matters. With `ANTHROPIC_API_KEY`
-set, the same scripts call Claude. The simulated total of the seven labs is about $4.17, most of it the two
+set, the same scripts call Claude. The simulated total of the seven labs is about $4.12, most of it the two
 selection evals in labs 01 and 07 (121 and 130 calls). Lab 04 uses two beta headers,
 `mid-conversation-tool-changes-2026-07-01` and `inline-tools-2026-09-15`, through `client.beta.messages.create`.
 Tool search, code execution, programmatic tool calling and eager input streaming are generally available and need
@@ -164,11 +164,13 @@ SEARCH_BM25 = {"type": "tool_search_tool_bm25_20251119", "name": "tool_search_to
 ```
 
 The regex variant is `{"type": "tool_search_tool_regex_20251119", "name": "tool_search_tool_regex"}`. The model's
-search is a `server_tool_use` whose documented input is `{"query": ..., "limit"?}`, and the API runs it and attaches
-the result *in the same response*. Lab 02, step 1:
+search is a `server_tool_use` whose input is `{"pattern": ..., "limit"?}` for the regex variant and
+`{"query": ..., "limit"?}` for BM25. The API runs it and attaches the result *in the same response*. Lab 02, step 1:
 
 ```
-  server_tool_use  id=srvtoolu_mock_9086fb2a0f5ee3b5a817  name=tool_search_tool_bm25  query='order carrier scan history tracking number'
+  server_tool_use  id=srvtoolu_mock_33f1396ecc90b987c022  name=tool_search_tool_regex  input={"pattern": "scan|track|histor"}
+...
+  server_tool_use  id=srvtoolu_mock_9086fb2a0f5ee3b5a817  name=tool_search_tool_bm25  input={"query": "order carrier scan history tracking number"}
 {
   "type": "tool_search_tool_result",
   "tool_use_id": "srvtoolu_mock_9086fb2a0f5ee3b5a817",
@@ -321,16 +323,19 @@ Instead of shipping every row to the client (the model) and letting it filter, s
 The protocol, as lab 05's transcript shows it:
 
 ```
-  <- response 1: stop_reason=tool_use  in=1,108 out=1,226
+  <- response 1: stop_reason=tool_use  in=1,108 out=1,013
        server_tool_use code_execution id=srvtoolu_mock_cffe21384ebb51dd0540  (27 lines of Python)
 ...
        tool_use get_pump_telemetry(serial_number=KP100-2608-0001) [from code]  caller={type: code_execution_20260120, tool_id: srvtoolu_mock_cffe21384ebb51dd0540}
 ...
   -> request 2: + assistant turn + user message with 11 tool_result blocks (and nothing else), container=container_mock_000040
+  <- response 2: stop_reason=tool_use  in=1,915 out=0
 ```
 
 * The paused response carries `tool_use` blocks with a `caller` naming the cell. `asyncio.gather` in the cell turns
   eleven calls into one pause.
+* Code-called `tool_use` and `tool_result` blocks go to the running cell, not to the model, so they cost no tokens.
+  A response that only re-pauses the cell, like response 2 above, is not model work: `out=0`.
 * You answer with a user message that contains **only** `tool_result` blocks, and pass
   `container=response.container.id`. Without the container it is a 400, and with extra text in the message it is
   a 400 too (lab 05, step 7).
@@ -346,16 +351,16 @@ The protocol, as lab 05's transcript shows it:
   -------------------------  --------  -----------  ----------  ----------------------  ------------  -----  -------
   direct, one call per turn        16           16          15                   1,337        30,355  3,191  $0.1116
   direct, parallel calls            3            3          15                   1,337         6,363  1,007  $0.0384
-  code cell (programmatic)          3            2          15                     276         8,140  2,261  $0.0972
+  code cell (programmatic)          3            2          15                     276         4,938  1,750  $0.0684
 ```
 
-Read the columns with care. The number that the code path changes is **tool output in context**: 276 tokens instead
-of 1,337, and every later turn of the conversation carries that difference. The billed columns in mock mode are
-pessimistic for the code path, because the mock bills the code-called `tool_use` and `tool_result` blocks as if the
-model wrote and read them. The docs say those results return to the running code, and the lab prints a `[mock]`
-caveat. Parallel direct calls are already cheap for a job this size. Code pays off as the fan-out grows, as the
-results grow, and as the conversation continues after them: exercise 3 puts the break-even near ten units with
-caching and near four without.
+Read the columns with care. The code path *reads* less: 4,938 billed input tokens against 6,363 for parallel direct
+calls. It *writes* more: 1,750 output tokens against 1,007, most of them the cell itself, at five times the input
+price. For one 11-unit question that ends the conversation, parallel direct calls are cheaper ($0.0384 against
+$0.0684). What the code path changes for the rest of the conversation is **tool output in context**: 276 tokens
+instead of 1,337, carried by every later turn. Code pays off as the fan-out grows, as the results grow, and as the
+conversation continues after them. Exercise 3 puts the break-even near ten units with caching, near four without,
+and near twelve when nothing follows the triage.
 
 **When code wins, and when round trips do.**
 
@@ -666,8 +671,8 @@ the invalid pattern that comes back as a 200:
     "type": "tool_search_tool_result_error"
 ```
 
-The mock labels the regex variant's input `pattern`, while the documented input is `{"query", "limit"?}` for both
-variants. The lab reads it defensively (`d2.search_input`) and prints a `[mock]` line saying so.
+The two variants name their input differently, `pattern` for regex and `query` for BM25. The labs read either
+through `d2.search_input`.
 
 ### Lab 03 - `03_wide_agent.py`: the wide agent, 120 tools and nine loaded
 
@@ -749,8 +754,8 @@ reuses the first cell's variables:
   same container: True (container_mock_000040); the cell used `units` from the first cell.
 ```
 
-Then read the three-ways table (section 4) with its `[mock]` caveat about billing. The column to trust is "tool
-output in context".
+Then read the three-ways table (section 4). The code path reads less and writes more, and what it changes for every
+later turn is "tool output in context".
 
 ### Lab 06 - `06_eager_input_streaming.py`: eager input streaming
 

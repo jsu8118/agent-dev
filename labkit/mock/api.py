@@ -265,7 +265,8 @@ class MockAnthropicAPI:
         return blocks
 
     # ------------------------------------------------------------------ server tools inside a reply
-    def _run_server_tools(self, req: MockRequest, reply: Reply, container, depth: int = 0) -> Reply:
+    def _run_server_tools(self, req: MockRequest, reply: Reply, container, depth: int = 0,
+                          prior: list[dict] | None = None) -> Reply:
         """Execute the server_tool_use blocks a scenario put in its reply, in place, and append their results.
 
         Like the API's server-side loop, generation continues in the same response after a server tool
@@ -275,9 +276,13 @@ class MockAnthropicAPI:
         if not any(b.get("type") == "server_tool_use" for b in reply.content):
             return reply
         sandbox = get_sandbox()
+        prior = list(prior or [])                          # blocks generated earlier in this same response
         out: list[dict] = []
         results: list[dict] = []
         loaded = set(req.loaded_tool_names)
+        for block in prior:                                # tools discovered earlier in this response count as loaded
+            if block.get("type") == "tool_search_tool_result":
+                loaded |= {r["tool_name"] for r in (block.get("content") or {}).get("tool_references") or []}
         paused = False
         for block in reply.content:
             if paused:
@@ -345,15 +350,15 @@ class MockAnthropicAPI:
             follow = reply.continuation(results)
         elif ends_on_result and depth < 6:
             # The model keeps going after a server tool returns: ask the scenario what comes next.
-            body = {**req.body, "messages": list(req.messages) + [{"role": "assistant", "content": list(out)}]}
+            body = {**req.body, "messages": list(req.messages) + [{"role": "assistant", "content": prior + out}]}
             follow_req = MockRequest(body, req.headers, raw_body=req.raw_body)
-            follow_req._partial_response = list(out)
+            follow_req._partial_response = prior + out
             if out[-1].get("type") == "code_execution_tool_result":
                 follow_req._completed_code = out[-1]
             _, follow = dispatch(follow_req)
         else:
             return new
-        follow = self._run_server_tools(req, follow, container, depth + 1)
+        follow = self._run_server_tools(req, follow, container, depth + 1, prior=prior + out)
         new.content.extend(follow.content)
         new.stop_reason = follow.stop_reason
         new.container = new.container or follow.container

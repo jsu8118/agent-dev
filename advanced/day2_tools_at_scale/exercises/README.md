@@ -64,9 +64,9 @@ b. Write the cost per conversation of each approach as a function of the number 
    tokens at list price). Where is the break-even *n* with caching? Without caching (every later request pays full
    price for everything it carries)?
 c. Evaluate both approaches at 11 and at 110 units, in dollars.
-d. Lab 05's step 5 shows the code path's *billed* input (8,140 tokens) above the parallel direct path's (6,363), yet
-   its "tool output in context" is a fifth. Why is that not a contradiction, and what would you measure live before
-   quoting a saving?
+d. Lab 05's step 5 shows the code path reading less than parallel direct calls (4,938 billed input tokens against
+   6,363) and still costing more ($0.0684 against $0.0384). Where does the difference come from, which assumption of
+   this exercise does the lab not share, and what would you measure live before quoting a saving?
 
 ## 4. Design - near-duplicate tools
 

@@ -28,8 +28,11 @@ How the stand-in "chooses" - every decision is lexical and derived from the requ
 Live Claude reads the same descriptions and reasons about them; the stand-in only measures their vocabulary, which is
 exactly what makes the description A/B of lab 07 move. Everything is deterministic.
 
-One search per response: after a search the stand-in acts on what it found (tool calls or an answer) and searches again
-on a later turn if a clause is still uncovered.
+One search per response, with the terms of every clause nothing visible covers (and a larger `limit` when there are
+several): after a search the stand-in acts on what it found (tool calls or an answer) and searches again on a later
+turn if a clause is still uncovered. It knows it is continuing a response from `req.partial_response`. That view holds
+the blocks since the policy was last asked, so a second search in the same response would lose sight of the first
+one's discoveries; live Claude may search more than once per response.
 """
 
 from __future__ import annotations
@@ -292,10 +295,8 @@ def query_of(search_input: dict) -> str:
 
 def ends_with_search(req: MockRequest) -> bool:
     """True inside a response that has just run a tool search (the API asks the model to continue)."""
-    if not req.messages or req.messages[-1].get("role") != "assistant":
-        return False
-    blocks = _blocks(req.messages[-1].get("content"))
-    return bool(blocks) and blocks[-1].get("type") == "tool_search_tool_result"
+    partial = req.partial_response
+    return bool(partial) and partial[-1].get("type") == "tool_search_tool_result"
 
 
 def _walk(value: Any, key: str, depth: int = 0) -> Any:

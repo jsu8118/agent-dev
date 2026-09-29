@@ -192,7 +192,8 @@ Everything below was verified against SDK 1.8 and the platform docs; use these s
 **Tool search + deferred loading (GA, no beta).** Declare `{"type": "tool_search_tool_regex_20251119", "name": "tool_search_tool_regex"}`
 or `..._bm25_20251119` and mark catalog tools `defer_loading: True` (at least one tool must stay non-deferred).
 Deferred tools cost no input tokens until discovered. The model's search appears as a `server_tool_use`
-(`name: "tool_search_tool_regex"|"tool_search_tool_bm25"`, `input: {"query", "limit"?}`) followed by a
+(`name: "tool_search_tool_regex"` with `input: {"pattern", "limit"?}`, or `"tool_search_tool_bm25"` with
+`input: {"query", "limit"?}`) followed by a
 `tool_search_tool_result` whose `content.tool_references` name the discovered tools (regex over name+description,
 or BM25); `tool_search_tool_result_error` with `error_code: invalid_tool_input` for a bad regex. Never send a
 `tool_result` for a `srvtoolu_` id. The mock: `search_tools(...)` in a policy; the request is re-dispatched to

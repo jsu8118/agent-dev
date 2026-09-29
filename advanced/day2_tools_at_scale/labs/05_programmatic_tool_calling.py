@@ -21,7 +21,8 @@ What to observe
     * Direct, one call per turn: 16 requests and a prompt that grows with every result.
     * Direct, parallel: 3 requests, but all 15 raw results sit in the context for the rest of the conversation.
     * Code: the cell pauses twice (11 calls, then 4), your client answers with tool_result blocks only, and only the
-      triage table (stdout) reaches the model.
+      triage table (stdout) reaches the model. The response that only re-pauses the cell has no output tokens.
+    * The summary table: the code path reads less and writes more; its saving is what every later turn carries.
     * The second question runs a new cell in the same container and uses `units` defined by the first.
     * Each rule of the protocol, broken once, is a 400.
 """
@@ -32,6 +33,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import textwrap
 from pathlib import Path
 
 import anthropic
@@ -193,18 +195,27 @@ def main() -> None:
     par_ctx = d2.token_cost(client, result_text(par.messages, code=False))
     code_ctx = d2.token_cost(client, result_text(messages, code=True))
     calls = len(ops.calls)
+    written = sum(1 for r in responses if any(b.type in ("text", "server_tool_use") for b in r.content))
     rows = [summary_row("direct, one call per turn", seq.model_calls, seq.model_calls, len(seq.calls), seq_ctx, seq.responses),
             summary_row("direct, parallel calls", par.model_calls, par.model_calls, len(par.calls), par_ctx, par.responses),
-            summary_row("code cell (programmatic)", len(responses), 2, calls, code_ctx, responses)]
+            summary_row("code cell (programmatic)", len(responses), written, calls, code_ctx, responses)]
     d2.table(rows, ["approach", "requests", "model turns", "tool calls", "tool output in context", "billed input", "out", "cost"])
     print("\n'model turns' counts responses the model wrote (code or text); the other code-path requests only resumed the\n"
           "paused cell with your results. 'tool output in context' is what the model reads: every tool_result for direct\n"
           "calls, only the cell's stdout for the code path - and it stays in the conversation for every later turn.")
+    par_row, code_row = rows[1], rows[2]
+    par_cost = sum(d2.response_cost(r) for r in par.responses)
+    code_cost = sum(d2.response_cost(r) for r in responses)
+    verdict = "parallel direct calls are cheaper" if par_cost < code_cost else "the code path is already cheaper"
+    print(textwrap.fill(
+        f"The code path reads less ({code_row[5]:,} billed input tokens against {par_row[5]:,}): the code-called tool_use "
+        f"and tool_result blocks go to the running cell, not to the model, and cost no tokens. It writes more "
+        f"({code_row[6]:,} output tokens against {par_row[6]:,}), most of them the cell itself. For this one question "
+        f"{verdict}; code pulls ahead as the fan-out grows and as the conversation goes on, since every later turn "
+        f"carries {code_ctx:,} tokens of tool output instead of {par_ctx:,} (exercise 3 finds the break-even).", width=114))
     if is_mock():
-        print("[mock] the billed columns are pessimistic for the code path: the mock bills the code-called tool_use and\n"
-              "       tool_result blocks as if the model wrote and read them. Per the programmatic-tool-calling docs those\n"
-              "       results return to the running code, not to Claude's context, and token cost scales with the final\n"
-              "       output. Trust the 'tool output in context' column here; measure cost live before you quote a saving.")
+        print("[mock] token counts are the mock's estimates, and the size of the cell is the stand-in's: live, the cell Claude\n"
+              "       writes sets the fixed cost of the code path - measure it before you quote a saving.")
 
     step(6, "A second question in the same container: state survives between cells")
     messages.append({"role": "user", "content": d2.KITS_QUESTION})

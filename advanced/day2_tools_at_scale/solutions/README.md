@@ -105,14 +105,18 @@ The fixed cost of writing the cell (600 output tokens, worth 3,000 input units) 
 and the per-unit difference is what large ones save. Caching narrows the gap: a cached re-read costs 0.1x, so direct
 calls are cheaper than an uncached estimate suggests.
 
-**d.** The mock bills the code-called `tool_use` and `tool_result` blocks as if the model wrote and read them, and
-lab 05 prints a `[mock]` caveat saying so. The docs say results of code-called tools return to the running code,
-not to Claude's context, and that token cost scales with the final output. The billed columns in mock mode are
-therefore pessimistic for the code path, while "tool output in context" is the property the design changes.
+**d.** The code path reads less because code-called `tool_use` and `tool_result` blocks go to the running cell, not
+to the model, and cost no tokens: the response that only re-pauses the cell shows `out=0`, and the request after it
+is no larger than the one before. It costs more because it writes more: 1,750 output tokens against 1,007, most of
+them the cell, at five times the input price. That is the fixed cost in (b).
 
-Live, measure four things per request of the code path, resumes included: `input_tokens`, `cache_*` and
-`output_tokens`, plus the prompt size of the first request *after* the triage. That last number decides the rest of
-the conversation's cost.
+The lab also does not share this exercise's assumption of six later requests. Its conversation ends after the
+triage, so the per-unit saving that later turns would collect never arrives. With no later requests the break-even
+moves to 11.7 units (line d of the script's output), just above the lab's 11 units.
+
+Live, measure three things. First, `input_tokens`, `cache_*` and `output_tokens` per request of the code path,
+resumes included. Second, the output tokens of the cell Claude actually writes, which set the fixed cost. Third, the
+prompt size of the first request after the triage, which decides the rest of the conversation's cost.
 
 ## 4. Near-duplicate tools
 

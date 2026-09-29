@@ -10,7 +10,8 @@ batches, citations and structured outputs. Betas go in `client.beta.messages.cre
 SEARCH = {"type": "tool_search_tool_regex_20251119", "name": "tool_search_tool_regex"}   # or _bm25_20251119
 tools = [SEARCH] + [dict(t, defer_loading=True) for t in CATALOG if not t["core"]] + [t for t in CATALOG if t["core"]]
 msg = client.beta.messages.create(model=MODEL, max_tokens=4000, tools=tools, messages=msgs)
-# assistant content: server_tool_use(name="tool_search_tool_regex", input={"query": ...}) -> tool_search_tool_result
+# assistant content: server_tool_use(name="tool_search_tool_regex", input={"pattern": ...})   # bm25: input={"query": ...}
+#   -> tool_search_tool_result
 #   (content.tool_references[].tool_name)  -> then ordinary tool_use blocks for discovered tools
 # never send a tool_result for a srvtoolu_ id; at least one tool must stay non-deferred
 client.beta.messages.count_tokens(model=MODEL, tools=tools, messages=msgs).input_tokens   # deferred tools cost 0

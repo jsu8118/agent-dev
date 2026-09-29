@@ -18,7 +18,8 @@ Run
 What to observe
     * W1: the search and the core call happen in the same response; the discovered tool is called on the next turn.
     * After each agent's first request, every turn reads its tools+system prefix from the cache (wide: "read" >= 1,452).
-    * A multi-clause task searches once with a combined query and a larger `limit` - more definitions land in the tail.
+    * The stand-in searches once per response: a multi-clause task (W4) gets one combined query and a larger `limit`,
+      so more definitions land in the tail. Live Claude may instead search once per clause.
     * The core-only agent finishes the tasks it can only partly, or escalates them; its requests are cheaper.
 """
 # test: expect=Outcome summary

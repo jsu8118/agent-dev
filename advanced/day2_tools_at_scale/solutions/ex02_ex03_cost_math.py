@@ -16,7 +16,8 @@ What to observe
     * Deferring the 111 tools costs about a fifth of loading them at Kestrel's discovery mix - and it would take more
       discoveries per conversation than the conversation has requests to break even.
     * With a 20-tool catalog the answer flips: loading wins below ~0.4 discoveries per conversation.
-    * Code beats direct calls from about ten units with caching, from about four without.
+    * Code beats direct calls from about ten units with caching, from about four without - and only from about twelve
+      when the conversation ends right after the triage, as lab 05's does.
 """
 # test: expect=break-even
 
@@ -87,6 +88,11 @@ def ex03() -> None:
             d, c = direct * n * INPUT, (code_fixed + code_slope * n) * INPUT
             print(f"     {n:>3} units: direct ${d:.4f}, code ${c:.4f} ({'code' if c < d else 'direct'} cheaper)")
     print(f"  a) each later request re-reads {DIRECT_PER_UNIT:.0f} tokens per unit (direct) vs {CODE_PER_UNIT:.0f} (code)")
+    direct_now = DIRECT_PER_UNIT * WRITE + CALL_OUTPUT_PER_UNIT * OUTPUT_RATIO     # no later requests: written once, never re-read
+    code_now = CODE_PER_UNIT * WRITE
+    print(f"  d) no later requests (lab 05 ends after the triage): direct {direct_now:,.1f} units per unit;\n"
+          f"     code {CELL_OUTPUT * OUTPUT_RATIO:,.0f} + {code_now:,.1f} per unit; break-even at "
+          f"{CELL_OUTPUT * OUTPUT_RATIO / (direct_now - code_now):.1f} units")
 
 
 if __name__ == "__main__":

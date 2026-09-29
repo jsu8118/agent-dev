@@ -292,7 +292,7 @@ def blocks_of(response: Any) -> list[str]:
 
 
 def search_input(block: Any) -> str:
-    """The query of a tool-search server_tool_use block (documented as `query`; read defensively)."""
+    """The search a tool-search server_tool_use block carries: `pattern` for the regex variant, `query` for BM25."""
     data = block.input or {}
     return str(data.get("query") or data.get("pattern") or "")
 

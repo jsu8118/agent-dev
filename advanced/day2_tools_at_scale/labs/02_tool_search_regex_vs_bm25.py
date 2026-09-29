@@ -9,15 +9,16 @@ Objective
 
 Concepts
     tool_search_tool_regex_20251119 vs tool_search_tool_bm25_20251119, defer_loading, the always-loaded core set,
-    server_tool_use (query, limit), tool_search_tool_result with tool_reference blocks, tool_search_tool_result_error
-    (invalid_tool_input), no tool_result for srvtoolu_ ids, what is searched (name, description, argument names and
-    argument descriptions), recall@k / precision@k / MRR, substring matches, descriptions as the retrieval surface
+    server_tool_use (pattern or query, limit), tool_search_tool_result with tool_reference blocks,
+    tool_search_tool_result_error (invalid_tool_input), no tool_result for srvtoolu_ ids, what is searched (name,
+    description, argument names and argument descriptions), recall@k / precision@k / MRR, substring matches,
+    descriptions as the retrieval surface
 
 Run
     python advanced/day2_tools_at_scale/labs/02_tool_search_regex_vs_bm25.py [--quick]
 
 What to observe
-    * The block shapes: a server_tool_use with the query, then tool_reference blocks in the tool_search_tool_result.
+    * The block shapes: a server_tool_use with the pattern or query, then tool_reference blocks in the result.
     * The score table: BM25 finds the expected tool first far more often than a three-word regex.
     * Why regex misses: substrings match inside unrelated words, and matches come back unranked.
     * Why BM25 misses: common words in the request ('seal', 'lot') outweigh the one word that mattered ('bulletin').
@@ -91,7 +92,7 @@ def step_shapes(client) -> None:
         r, search, refs = discover(client, variant, text)
         print(f"\n{variant['type']} - response blocks: {d2.blocks_of(r)}")
         if search is not None:
-            print(f"  server_tool_use  id={search.id}  name={search.name}  query={d2.search_input(search)!r}")
+            print(f"  server_tool_use  id={search.id}  name={search.name}  input={json.dumps(search.input)}")
         result = next((b for b in r.content if b.type == "tool_search_tool_result"), None)
         if result is not None:
             print_json({"type": result.type, "tool_use_id": result.tool_use_id, "content": result.content.model_dump()})
@@ -100,11 +101,10 @@ def step_shapes(client) -> None:
               f"{u.cache_read_input_tokens or 0:,}, uncached {u.input_tokens:,}); stop_reason={r.stop_reason}")
         print(f"  reply: {text_of(r)}")
     print("\nWhat the shapes say: the search is a server tool - its id starts with srvtoolu_, the API ran it and attached the\n"
-          "result in the same response, and you never send a tool_result for it. The result names tools by reference; the\n"
-          "API expands the definitions for the model. You keep sending the same `tools` array on every request.")
-    if is_mock():
-        print("[mock] the mock labels the regex variant's input `pattern`; the documented input is {\"query\": ..., \"limit\"?}\n"
-              "       for both variants - read it defensively (d2.search_input) as this lab does.")
+          "result in the same response, and you never send a tool_result for it. The input is the model's search: a\n"
+          "`pattern` for the regex variant, a `query` for BM25, each with an optional `limit` (d2.search_input reads\n"
+          "either). The result names tools by reference; the API expands the definitions for the model. You keep sending\n"
+          "the same `tools` array on every request.")
 
 
 def step_score(client, tasks: list[tuple[str, str]]) -> dict[str, list[tuple[str, list[str]]]]:
@@ -121,7 +121,7 @@ def step_score(client, tasks: list[tuple[str, str]]) -> dict[str, list[tuple[str
         rows.append([d2.clip(text, 44), expected, str(rr.index(expected) + 1) if expected in rr else "-",
                      str(rb.index(expected) + 1) if expected in rb else "-", d2.clip(queries["regex"][i], 30),
                      d2.clip(queries["bm25"][i], 40)])
-    d2.table(rows, ["task", "expected tool", "regex rank", "bm25 rank", "regex query", "bm25 query"])
+    d2.table(rows, ["task", "expected tool", "regex rank", "bm25 rank", "regex pattern", "bm25 query"])
     print()
     d2.table([[key, f"{s['hit@1']:.0%}", f"{s['hit@3']:.0%}", f"{s['hit@5']:.0%}", f"{s['p@5']:.2f}", f"{s['mrr']:.2f}",
                f"{s['returned']:.1f}"] for key, s in ((k, score(v)) for k, v in rankings.items())],
