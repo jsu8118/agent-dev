@@ -19,11 +19,13 @@ Run
 
 What to observe
     * Step 1: a coordinator whose roster contains a coordinator is refused - one level of delegation.
-    * Step 2: the data goes in as two mounted files; the primary stream shows threads created, tasks sent and
-      reports received, and the session stopping for your custom tools (the unit listing, and the commits).
+    * Step 2: the data goes in as two Files API uploads mounted as session resources (session.resources lists
+      them); the primary stream shows threads created, tasks sent and reports received, and the session stopping
+      for your custom tools (the unit listing, and the commits).
     * Step 3: the first commit rejects the bookings that the second planner took from a stale snapshot; the lead
       refreshes the snapshot and re-plans them in the first planner's existing thread; 11 of 11 end scheduled.
-    * Step 4: threads.list - the primary plus six threads, each with its own context and usage.
+    * Step 4: threads.list - the primary plus six threads, each with its own context and usage (mostly cache reads:
+      every thread caches its own history).
     * Step 5: the comparison with lab 01: requests, tokens, cost, modelled latency and who owns which concern.
 """
 # test: expect=one level of delegation
@@ -41,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anthropic  # noqa: E402
 
 from advanced.lib.durable import RunStore  # noqa: E402
-from labkit import MODEL, get_client, header, is_mock, runs_dir, step, wrap  # noqa: E402
+from labkit import MODEL, get_client, header, is_mock, step, wrap  # noqa: E402
 
 import _day4 as d4  # noqa: E402
 
@@ -120,12 +122,14 @@ def setup_agents(client, planners: int):
 
 def mount_campaign_files(client, desk: d4.RecallDesk) -> list[dict]:
     """Upload the campaign data and the resources snapshot with the Files API; return the session resources that
-    mount them read-only in the workspace. Data goes to the workers by reference, not through anyone's context."""
+    mount them in the workspace (plus each file's size, for the printout). Data goes to the workers by reference,
+    not through anyone's context."""
     contents = {"units.json": json.dumps(desk.campaign_data()), "resources.json": json.dumps(desk.resources())}
     resources = []
     for name, text in contents.items():
-        uploaded = client.files.upload(file=(name, text.encode("utf-8"), "application/json"))
-        resources.append({"type": "file", "file_id": uploaded.id, "mount_path": MOUNTS[name], "_text": text})
+        data = text.encode("utf-8")
+        uploaded = client.files.upload(file=(name, data, "application/json"))
+        resources.append({"type": "file", "file_id": uploaded.id, "mount_path": MOUNTS[name], "_bytes": len(data)})
     return resources
 
 
@@ -139,11 +143,6 @@ def run_hosted(client, desk: d4.RecallDesk, *, planners: int = 2, on_event=None,
         agent=lead.id, environment_id=env.id, title="RC-2026-03 hosted swarm",
         budget={"type": "limit", "max_list_cost": {"amount": str(budget_cents), "currency": "USD"}},
         resources=[{k: v for k, v in m.items() if not k.startswith("_")} for m in mounts])
-    if is_mock():                     # [mock] the mock does not mount session resources: place the files where it looks
-        for m in mounts:
-            target = runs_dir("mock_sessions", session.id) / m["mount_path"].lstrip("/")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(m["_text"], encoding="utf-8")
     client.beta.sessions.events.send(session.id, events=[{"type": "user.message", "content": [{"type": "text", "text":
         "Run recall campaign RC-2026-03: a remedy plan for every affected unit, committed to our systems."}]}])
     events: list = []
@@ -254,10 +253,12 @@ def main() -> None:
 
     session_id, stop, commits, events, mounts = run_hosted(client, desk, planners=args.planners, on_event=show)
     print(f"\n  session ended: stop_reason={stop.type if stop else None}")
-    print("  mounted read-only at session creation (Files API upload + session resources): "
-          + ", ".join(f"{m['mount_path']} ({len(m['_text']) // 1000} kB)" for m in mounts))
-    d4.mock_note("the mock does not mount session resources, so the lab writes the two files into the mock session's "
-                 "workspace directory; live, the resources entries on sessions.create do it.")
+    size = {m["file_id"]: m["_bytes"] for m in mounts}
+    listed = client.beta.sessions.retrieve(session_id).resources
+    print("  session.resources - Files API uploads mounted into the container at creation: "
+          + ", ".join(f"{r.mount_path} ({size.get(r.file_id, 0) // 1000} kB)" for r in listed))
+    d4.mock_note("the session's container is the directory .runs/mock_sessions/<session id>; the mounted files are in "
+                 "its workspace/campaign/.")
 
     step(3, "Commits: where the stale snapshot was caught")
     for i, entry in enumerate(commits.log, 1):
@@ -278,12 +279,15 @@ def main() -> None:
     step(4, "Threads: one context per delegated task, one budget for the session")
     rows = []
     for t in client.beta.sessions.threads.list(session_id):
+        u = d4.usage_tokens(t.usage)
         rows.append([t.agent.name, "primary" if t.parent_thread_id is None else "child", t.status,
-                     f"{t.usage.input_tokens:,}", f"{t.usage.output_tokens:,}", f"{t.usage.list_cost.amount}c"])
-    print(d4.table(rows, ["agent", "thread", "status", "input tok", "output tok", "list cost"]))
+                     f"{d4.prompt_tokens(u):,}", f"{u['cache_read_input_tokens']:,}", f"{u['output_tokens']:,}",
+                     f"{t.usage.list_cost.amount}c"])
+    print(d4.table(rows, ["agent", "thread", "status", "prompt tok", "cache read", "output tok", "list cost"]))
     spend = d4.session_spend(client, session_id)
-    print(f"  session: {spend['requests']} model requests, {spend['input_tokens']:,} input / {spend['output_tokens']:,} output "
-          f"tokens, list_cost {spend['list_cost_cents']} cents of a 200-cent budget (exact {d4.money(spend['cost'])})")
+    print(f"  session: {spend['requests']} model requests, {d4.prompt_tokens(spend):,} prompt tokens "
+          f"({spend['cache_read_input_tokens']:,} read from the cache) and {spend['output_tokens']:,} output; list_cost "
+          f"{spend['list_cost_cents']} cents of a 200-cent budget (exact {d4.money(spend['cost'])})")
 
     step(5, "Hosted vs self-hosted on the same 11 units (lab 01's tuned swarm, re-run here without the crash)")
     base = self_hosted_baseline(client)
@@ -291,14 +295,15 @@ def main() -> None:
     total = base["meter"].total()
     rows = [["self-hosted (lab 01)", f"{base['score']['ok']}/11", total.calls, f"{total.input_tokens:,}", f"{total.output_tokens:,}",
              d4.money(total.cost), d4.money(total.uncached_cost), f"{base['critical']:.0f}s", f"{total.largest_prompt:,}"],
-            ["hosted (this lab)", f"{scored['ok']}/11", spend["requests"], f"{spend['input_tokens'] + spend['cache_read_input_tokens']:,}",
-             f"{spend['output_tokens']:,}", d4.money(spend["cost"]), d4.money(spend["cost"]), f"{timeline['critical']:.0f}s",
-             f"{spend['largest_prompt']:,}"]]
-    print(d4.table(rows, ["architecture", "scheduled", "requests", "input tok", "output tok", "cost", "cost uncached",
+            ["hosted (this lab)", f"{scored['ok']}/11", spend["requests"], f"{d4.prompt_tokens(spend):,}",
+             f"{spend['output_tokens']:,}", d4.money(spend["cost"]), d4.money(d4.uncached_cost(spend)),
+             f"{timeline['critical']:.0f}s", f"{spend['largest_prompt']:,}"]]
+    print(d4.table(rows, ["architecture", "scheduled", "requests", "prompt tok", "output tok", "cost", "cost uncached",
                           "latency*", "largest prompt"]))
     print("  * modelled critical path (labs/_day4.py LATENCY_ASSUMPTIONS): workers and threads in parallel; not a measurement.")
-    d4.mock_note("the hosted mock bills every token uncached, while the platform caches session history; compare the "
-                 "'cost uncached' column like-for-like, and measure the hosted bill live.")
+    print("  Both sides cache: the self-hosted requests carry cache_control, and the session caches its own history.")
+    d4.mock_note("the platform also bills $0.08 per session-hour of running time, which the mock does not count; "
+                 "measure the hosted bill live.")
     rows = [["work queue, priorities, dead letters", "yours (SQLite queue)", "none: the lead's turn order is the schedule"],
             ["crash of the orchestrator", "resume from the run log (lab 01)", "platform: the session and threads persist"],
             ["parallel workers", "your worker pool", "threads (up to 25 concurrent per session)"],

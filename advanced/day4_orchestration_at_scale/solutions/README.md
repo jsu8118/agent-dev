@@ -150,10 +150,10 @@ effects gives the same observable result.
 deadlock across agents. A single planner that owns the calendar is conflict-free among agents and simple - it is the
 `--planners 1` fix of lab 06 - but it serializes planning and does nothing about the humans. Optimistic concurrency
 alone is correct but, with overlapping planners, pays for every collision: in lab 06 two planners on one snapshot lost
-36% of their plans (4 of 11) at the first commit, and the run needed 22 model requests and $0.7450 against 16 requests
-and $0.4396 with one planner (`--planners 1`, lab 07's last row) - six more requests (the second planner, a snapshot
+36% of their plans (4 of 11) at the first commit, and the run needed 22 model requests and $0.5227 against 16 requests
+and $0.3060 with one planner (`--planners 1`, lab 07's last row) - six more requests (the second planner, a snapshot
 refresh, a re-plan turn in the first planner's thread, a second commit), 1.7x the cost, and a modelled critical path
-of 236 s instead of 154 s. The parallelism bought nothing: planning is cheap, the shared resource is the bottleneck.
+of 233 s instead of 153 s. The parallelism bought nothing: planning is cheap, the shared resource is the bottleneck.
 
 ## 8. One agent, a self-hosted swarm or a hosted swarm?
 

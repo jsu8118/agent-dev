@@ -3,31 +3,38 @@
 Objective
     Move one piece of the swarm onto Claude Managed Agents: a persisted, versioned agent with a custom tool
     (`get_unit`, answered by YOUR system of record) and the built-in agent toolset (it writes its assessment into
-    the session's container), an environment, and a session. Send a message, answer the custom tool call when the
-    session stops with `requires_action`, stream the events, read usage and list cost - then run a second session
-    into its budget and watch it pause instead of overspending.
+    the session's container), an environment, and a session. Update the agent the safe way (a conditional update
+    that names the version it was based on), send a message, answer the custom tool call when the session stops
+    with `requires_action`, stream the events, read usage and list cost - then run a second session into its
+    budget, watch it pause instead of overspending, and resume it by raising the budget.
 
 Concepts
-    agents (create once, update in place, versions, pinning), environments (unique names), sessions and their
-    status, the event stream (user.*, agent.*, session.*, span.*), custom-tool round trips (agent.custom_tool_use ->
-    idle with requires_action -> user.custom_tool_result), the built-in toolset, stream-first + history
-    consolidation, usage and list_cost, session budgets (a pre-request gate), hosted runtime vs Day 1's runtime
+    agents (create once, update in place, versions, conditional updates and 409s, pinning), environments (unique
+    names), sessions and their status, the event stream (user.*, agent.*, session.*, span.*), custom-tool round trips
+    (agent.custom_tool_use -> idle with requires_action -> user.custom_tool_result), the built-in toolset,
+    stream-first + history consolidation, usage, cached session history and list_cost, session budgets (a
+    pre-request gate; settle events only at the cap; a budget change resumes), hosted runtime vs Day 1's runtime
 
 Run
     python advanced/day4_orchestration_at_scale/labs/05_managed_agents_sessions.py
 
 What to observe
     * Step 1: the agent and environment are looked up before they are created - they are persistent resources,
-      not per-run objects; the session pins the agent version it runs.
+      not per-run objects; the session pins the agent version it runs. Two editors update the agent from the same
+      version: the second gets a 409, re-reads and re-applies its change, and the running session keeps its version.
     * Step 2: after the user message the session is idle with stop_reason requires_action and the id of the
       agent.custom_tool_use event: the agent is waiting for YOUR code.
     * Step 3: one user.custom_tool_result later, the agent writes its assessment with the built-in `write` tool
       (inside the session's container) and ends its turn; the stream shows every step.
-    * Step 4: usage per model request (span.model_request_end) adds up to the session's usage; list_cost is in cents.
-    * Step 5: a session with a 6-cent budget stops with stop_reason budget_reached part-way through six units.
+    * Step 4: usage per model request (span.model_request_end) adds up to the session's usage; the session caches
+      its own history, so after the first request the prompt is mostly cache reads; list_cost is in cents.
+    * Step 5: a session with a 6-cent budget stops with stop_reason budget_reached part-way through six units; a
+      user.message is then refused with a 400; raising the budget resumes the paused turn, which finishes the six.
 """
 # test: expect=requires_action
+# test: expect=409
 # test: expect=budget_reached
+# test: expect=resumed
 
 from __future__ import annotations
 
@@ -36,6 +43,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import anthropic  # noqa: E402
 
 from labkit import MODEL, get_client, header, is_mock, runs_dir, step, wrap  # noqa: E402
 
@@ -63,9 +72,10 @@ def answer_with(desk: d4.RecallDesk):
 
 def main() -> None:
     header("Lab 05 - Managed Agents: sessions, events, custom tools, usage, budgets")
-    d4.mock_note("the agent loop is a rule-based stand-in; the objects, event stream, custom-tool round trip, built-in "
-                 "tools (run in .runs/mock_sessions/<session id>) and budget gate are simulated with the API's shapes. "
-                 "The mock processes events synchronously and its stream replays history; the platform does neither.")
+    d4.mock_note("the agent loop is a rule-based stand-in; the objects, versions, event stream, custom-tool round trip, "
+                 "built-in tools (run in .runs/mock_sessions/<session id>), history caching and budget gate are simulated "
+                 "with the API's shapes. The mock processes events synchronously and its stream replays history; the "
+                 "platform does neither.")
     client = get_client()
     desk = d4.RecallDesk()
 
@@ -81,6 +91,21 @@ def main() -> None:
                                           metadata={"campaign": "RC-2026-03"})
     print(f"  session created: status={session.status}, pinned to agent version {session.agent.version}")
     print("  (model, system prompt and tools live on the agent; the session only points at it)")
+    base = agent.version                       # two editors both read this version (live, each run adds two versions)
+    ops = client.beta.agents.update(agent.id, version=base, metadata={"owner": "field-service-ops"})
+    print(f"  field-service ops: update(version={base}, metadata) -> version {ops.version}")
+    try:
+        client.beta.agents.update(agent.id, version=base, metadata={"reviewed_by": "quality"})
+        print(f"  quality: update(version={base}) accepted - unexpected, the agent had moved on")
+    except anthropic.ConflictError as exc:
+        print(f"  quality, still on version {base}: update(version={base}) -> 409: {d4.api_error_message(exc)}")
+        current = client.beta.agents.retrieve(agent.id)
+        quality = client.beta.agents.update(agent.id, version=current.version,
+                                            metadata={**(current.metadata or {}), "reviewed_by": "quality"})
+        print(f"  quality re-reads (version {current.version}), re-applies its change -> version {quality.version}")
+    history = list(client.beta.agents.versions.list(agent.id))
+    print(f"  agents.versions.list: {len(history)} immutable versions; the session still runs version "
+          f"{client.beta.sessions.retrieve(session.id).agent.version} - an update never reaches a running session")
 
     step(2, "Stream first, then send a user message; the session stops for YOUR custom tool")
     seen: set[str] = set()
@@ -116,14 +141,20 @@ def main() -> None:
         print("  The assessment is in the session's container; fetch session outputs through the Files API if you need them.")
 
     step(4, "Usage and cost: per request, per session")
-    spend = d4.session_spend(client, session.id)
-    print(f"  {spend['requests']} model requests: input {spend['input_tokens']:,} (cache read {spend['cache_read_input_tokens']:,}), "
-          f"output {spend['output_tokens']:,} tokens -> {d4.money(spend['cost'])} at list prices")
+    spans = [d4.usage_tokens(e.model_usage) for e in d4.session_events(client, session.id) if e.type == "span.model_request_end"]
+    summed = {k: sum(u[k] for u in spans) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
+                                                    "output_tokens")}
+    print(f"  {len(spans)} span.model_request_end events: {d4.prompt_tokens(summed):,} prompt tokens (input "
+          f"{summed['input_tokens']:,}, cache write {summed['cache_creation_input_tokens']:,}, cache read "
+          f"{summed['cache_read_input_tokens']:,}) and {summed['output_tokens']:,} output")
     fetched = client.beta.sessions.retrieve(session.id)
-    print(f"  sessions.retrieve().usage: input {fetched.usage.input_tokens:,}, output {fetched.usage.output_tokens:,}, "
-          f"list_cost {fetched.usage.list_cost.amount} cents ({fetched.usage.list_cost.currency}; rounded to the cent)")
-    d4.mock_note("the platform caches session history automatically and adds $0.08 per session-hour of running time to "
-                 "list_cost; the mock bills every input token uncached and counts no running time.")
+    print(f"  sessions.retrieve().usage has the same totals: {d4.usage_tokens(fetched.usage) == summed}; list_cost "
+          f"{fetched.usage.list_cost.amount} cents ({fetched.usage.list_cost.currency}; rounded to the cent)")
+    spend = d4.session_spend(client, session.id)
+    print(f"  at list prices: {d4.money(spend['cost'])} as run, {d4.money(d4.uncached_cost(spend))} if nothing had been cached")
+    print("  The session caches its own history: each request writes its new tail to the cache and re-reads the rest")
+    print("  at a tenth of the input price - nothing to configure, unlike the Messages API (Day 3).")
+    d4.mock_note("the platform also adds $0.08 per session-hour of running time to list_cost; the mock counts no running time.")
 
     step(5, "A session budget: a hard cap on list cost, checked before every model request")
     targets = ["KP250-2608-0007", "KP250-2608-0008", "KP100-2608-0002", "KP250-2608-0002", "KP250-2608-0003", "KP250-2608-0004"]
@@ -132,25 +163,33 @@ def main() -> None:
     client.beta.sessions.events.send(capped.id, events=[{"type": "user.message", "content": [{"type": "text", "text":
         "Assess units " + ", ".join(targets) + " for the field-service team."}]}])
     log: list = []
-    stop = d4.drive_session(client, capped.id, answer_with(desk), log.append)
+    seen5: set[str] = set()
+    stop = d4.drive_session(client, capped.id, answer_with(desk), log.append, seen=seen5)
     written = [e.input["path"] for e in log if e.type == "agent.tool_use" and e.name == "write"]
     spend = d4.session_spend(client, capped.id)
     print(f"  budget 6 cents -> stop_reason={stop.type} after {spend['requests']} model requests; "
           f"{len(written)} of {len(targets)} assessments written ({', '.join(Path(p).stem for p in written)})")
     print(f"  consumed list cost: {spend['list_cost_cents']} cents (exact {d4.money(spend['cost'])}): the request that crossed "
           "the cap completed, the next one was never made")
-    print(wrap("At the cap only settle events are accepted (custom tool results, tool confirmations, interrupts); a "
-               "user.message is a 400. Nothing resumes the session except a budget update: raise the cap above the "
-               "consumed list cost, or remove it (budget: null; removal is one-way).", "  "))
-    client.beta.sessions.update(capped.id, budget={"type": "limit", "max_list_cost": {"amount": "25", "currency": "USD"}})
-    updated = [e for e in client.beta.sessions.events.list(capped.id) if e.type == "session.updated"][-1]
-    print(f"  sessions.update(budget=25 cents) -> event session.updated, budget {updated.budget.max_list_cost.amount} cents")
-    if is_mock():
-        print("  [mock] the mock records the new budget but does not resume the paused turn; the platform resumes it "
-              "automatically, and live the lab drives the session on to the end of its turn.")
-    else:
-        stop = d4.drive_session(client, capped.id, answer_with(desk), log.append)
-        print(f"  resumed after the budget change: stop_reason={stop.type}")
+    try:
+        client.beta.sessions.events.send(capped.id, events=[{"type": "user.message", "content": [{"type": "text", "text":
+            "Also assess KP250-2608-0005."}]}])
+        print("  a user.message at the cap was accepted - unexpected")
+    except anthropic.BadRequestError as exc:
+        print(f"  a user.message at the cap -> 400: {d4.api_error_message(exc)}")
+    print(wrap("At the cap only settle events are accepted (custom tool results, tool confirmations, interrupts). Nothing "
+               "resumes the session except a budget change: raise the cap above the consumed list cost - base it on "
+               "usage.list_cost, not on the old cap - or remove it (budget: null; removal is one-way).", "  "))
+    new_cap = spend["list_cost_cents"] + 20
+    client.beta.sessions.update(capped.id, budget={"type": "limit", "max_list_cost": {"amount": str(new_cap), "currency": "USD"}})
+    stop = d4.drive_session(client, capped.id, answer_with(desk), log.append, seen=seen5)
+    updated = next((e for e in reversed(log) if e.type == "session.updated"), None)
+    written = [e.input["path"] for e in log if e.type == "agent.tool_use" and e.name == "write"]
+    spend = d4.session_spend(client, capped.id)
+    echoed = f"budget {updated.budget.max_list_cost.amount} cents" if updated is not None and updated.budget else "no event seen"
+    print(f"  sessions.update(budget={new_cap} cents) -> session.updated ({echoed}), and the paused turn resumed:")
+    print(f"  stop_reason={stop.type}; {len(written)} of {len(targets)} assessments written, {spend['requests']} model requests, "
+          f"list cost {spend['list_cost_cents']} cents")
 
     step(6, "What the hosted runtime gives you, and what stays yours")
     rows = [["agent loop, retries of model calls", "platform (sessions reschedule on retryable errors)", "your DurableRunner (Day 1)"],

@@ -66,11 +66,11 @@ Without `ANTHROPIC_API_KEY` every lab runs in **mock mode** against labkit's off
 Managed Agents. The mock validates requests like the real API and answers through rule-based policies in
 `advanced/mock_scenarios/day4_orchestration_at_scale.py`: they read the tool results, envelopes and files a model
 would see and never the answer key. The queue, the leases, the durable runtime, the desk (the campaign's system of
-record), the guards, the bus and the scorer are real code. Four mock behaviours matter today and are flagged `[mock]`
+record), the guards, the bus and the scorer are real code. Three mock behaviours matter today and are flagged `[mock]`
 in the output: the stand-ins do not reason (scripted misbehaviours are labelled as such); the hosted mock processes
-events synchronously, runs `send_to_agent` to completion before returning, and replays history on the stream; it
-does not mount session resources (lab 06 writes the files where the mock looks for them); and it bills session tokens
-uncached, where the platform caches session history. Live, the same scripts run against Claude (`claude-opus-5`); the
+events synchronously, runs `send_to_agent` to completion before returning, and replays history on the stream; and it
+counts no session running time in list cost. Agent versions, mounted files, cached session history and budget
+resumption are simulated with the platform's behaviour. Live, the same scripts run against Claude (`claude-opus-5`); the
 hosted labs need a workspace with Managed Agents access. Every lab prints its cost - the Messages API ledger at exit,
 and a separate line for Managed Agents sessions, whose usage the ledger does not see. The mock's simulated total for
 all labs and solutions is about $6; expect the same order of magnitude live, more where Claude thinks longer.
@@ -283,11 +283,13 @@ renamed field updated.
   history does.
 * **Usage and budgets.** Each `span.model_request_end` carries that request's tokens; `sessions.retrieve().usage`
   carries the totals and `list_cost` (cents, as an integer string, rounded; list prices, including $0.08 per
-  session-hour of running time). A **session budget** (`{"type": "limit", "max_list_cost": {"amount": "2500",
-  "currency": "USD"}}`, create-only) is checked before every model request; the request that crosses the cap completes,
-  so a session overshoots by at most one request per running thread. At the cap the session goes idle with
-  `budget_reached` and accepts only settle events (tool results, tool confirmations, interrupts); a `user.message` is a
-  400; only a budget update (raised above the consumed cost, or removed with `budget: null`) resumes it.
+  session-hour of running time). The session caches its own history - nothing to configure - so after the first
+  request most of a prompt is billed as cache reads. A **session budget** (`{"type": "limit", "max_list_cost":
+  {"amount": "2500", "currency": "USD"}}`, create-only) is checked before every model request; the request that
+  crosses the cap completes, so a session overshoots by at most one request per running thread. At the cap the session
+  goes idle with `budget_reached` and accepts only settle events (tool results, tool confirmations, interrupts); a
+  `user.message` is a 400; only a budget update (raised above the consumed cost, or removed with `budget: null`)
+  resumes it.
 * **Files.** Upload with the Files API and mount read-only at session creation (`resources=[{"type": "file",
   "file_id": ..., "mount_path": "/workspace/..."}]`); agents write outputs to `/mnt/session/outputs/`.
 
@@ -306,9 +308,10 @@ outcomes (`user.define_outcome` with a rubric and a grader), scheduled deploymen
 memory stores and self-hosted sandboxes are not simulated by the mock; read them in the Managed Agents docs listed
 under Further reading before you rely on them.
 
-**Kestrel.** Lab 05 moves the unit assessor onto the platform: `get_unit` is a custom tool answered by Kestrel's
-desk, the assessment is written into the container with the built-in `write` tool, and a second session with a
-6-cent budget stops after two of six units.
+**Kestrel.** Lab 05 moves the unit assessor onto the platform: two editors' conditional updates of the agent meet a
+409, `get_unit` is a custom tool answered by Kestrel's desk, the assessment is written into the container with the
+built-in `write` tool, and a second session with a 6-cent budget stops after four of six units, refuses new work at
+the cap, and finishes the six once its budget is raised.
 
 ## 6. Hosted coordinators
 
@@ -364,7 +367,7 @@ used about 15x the tokens of a chat.
 | Metric | Definition here | Why it matters |
 |---|---|---|
 | success per unit of work | units booked correctly / units in the campaign (`check_plan` against the dataset, the rules and the desk's bookings) | an honest "pending" is escalated, not success; a missing unit is a failure |
-| cost per success | like-for-like cost / successful units | cheap and wrong is not cheap |
+| cost per success | cost as run (caching included) / successful units | cheap and wrong is not cheap |
 | cost multiplication | cost / cost of one agent on the same task | the first course's 1.65x, made routine |
 | coordination tokens | coordinator tokens + brief tokens x worker turns + report tokens | tokens that exist only because the work was split |
 | largest prompt | the biggest single request | context isolation, and headroom |
@@ -377,8 +380,8 @@ region, with the skill, on or before `remedy_by`. Attribution walks back from ea
 booking, to the tool result it came from, to the parameters of that call - and stops at the first step whose input does
 not belong to this unit or this moment. The durable run logs (one per agent, one event per step) and the session's
 event stream *are* the traces; debugging a swarm becomes a query. Two caveats keep the numbers honest: in mock mode
-the agents are stand-ins, so success measures architecture, not model quality; and the hosted mock does not cache, so
-cross-architecture costs are compared at uncached list prices.
+the agents are stand-ins, so success measures architecture, not model quality; and costs are compared as run, with
+prompt caching on both sides, next to the same tokens priced uncached - how much of each bill the cache carries.
 
 **Kestrel.** Lab 07 scores five configurations on the same eleven units and attributes six incidents: the two late
 safety bookings of the single agent, and the four plans the hosted swarm's second planner took from a stale snapshot.
@@ -390,10 +393,11 @@ Start from the task, then the numbers, then ownership.
 | | One agent | Self-hosted swarm (tuned) | Hosted swarm (one planner) |
 |---|---|---|---|
 | success (Lab 07) | 9/11 - two safety units booked late | 11/11 | 11/11 |
-| $ per success, like-for-like | $0.1218 | $0.0604 | $0.0400 |
+| $ per success, as run | $0.0376 | $0.0323 | $0.0278 |
+| cost vs one agent, as run | 1.00x | 1.05x | 0.90x |
 | coordination share | 0% | 13% | 67% |
 | largest prompt | 8,223 | 3,266 | 7,591 |
-| critical path (modelled) | 215 s | 79 s | 154 s |
+| critical path (modelled) | 215 s | 79 s | 153 s |
 | survives a crash / waits for days | only with Day 1's runtime | yes: queue + durable runs | within a session; days and approvals are yours |
 | you operate | a runtime | a queue, workers, guards | custom tools and policy |
 | choose it when | few, similar items that fit one context | work spans days, crashes, approvals; exactly-once effects; priorities | a session-sized fan-out; a sandbox; a hard cap; no agent infrastructure |
@@ -608,32 +612,46 @@ schema requires it - and what it would have left out without the schema.
 `python advanced/day4_orchestration_at_scale/labs/05_managed_agents_sessions.py`
 
 1. Looks up or creates the agent (custom `get_unit` + the built-in toolset) and the environment; creates a session
-   pinned to the agent's version.
+   pinned to the agent's version; then two editors update the agent from the same version.
 2. Opens the stream, sends a user message, and reads until the session stops for the custom tool.
 3. Answers it from Kestrel's desk and drives the session to the end of its turn (stream plus history, de-duplicated).
 4. Reads usage per request and per session.
-5. Runs a second session with a 6-cent budget into its cap; updates the budget.
+5. Runs a second session with a 6-cent budget into its cap, tries to add work at the cap, and raises the budget.
 6. Prints what the hosted runtime takes over and what stays yours; archives the sessions, not the agent.
 
 ```
+  field-service ops: update(version=1, metadata) -> version 2
+  quality, still on version 1: update(version=1) -> 409: version conflict: the agent is at version 2, the update was based on version 1; re-read it and retry
+  quality re-reads (version 2), re-applies its change -> version 3
+  agents.versions.list: 3 immutable versions; the session still runs version 1 - an update never reaches a running session
+...
     agent.custom_tool_use            get_unit({"serial": "KP250-2608-0006"})
-    session.status_idle              stop_reason=requires_action event_ids=['sevt_mock_000020']
+    session.status_idle              stop_reason=requires_action event_ids=['sevt_mock_000028']
 ...
     agent.tool_use                   write({"path": "recall/KP250-2608-0006.json", "content": "{\n \"serial\":...) permission=allow
     agent.tool_result                wrote recall/KP250-2608-0006.json
 ...
-  3 model requests: input 3,063 (cache read 0), output 678 tokens -> $0.0323 at list prices
-  sessions.retrieve().usage: input 3,063, output 678, list_cost 3 cents (USD; rounded to the cent)
+  3 span.model_request_end events: 3,063 prompt tokens (input 0, cache write 1,190, cache read 1,873) and 678 output
+  sessions.retrieve().usage has the same totals: True; list_cost 3 cents (USD; rounded to the cent)
+  at list prices: $0.0253 as run, $0.0323 if nothing had been cached
 ...
-  budget 6 cents -> stop_reason=budget_reached after 5 model requests; 2 of 6 assessments written (KP250-2608-0007, KP250-2608-0008)
-  consumed list cost: 6 cents (exact $0.0601): the request that crossed the cap completed, the next one was never made
+  budget 6 cents -> stop_reason=budget_reached after 8 model requests; 4 of 6 assessments written (KP250-2608-0007, KP250-2608-0008, KP100-2608-0002, KP250-2608-0002)
+  consumed list cost: 7 cents (exact $0.0678): the request that crossed the cap completed, the next one was never made
+  a user.message at the cap -> 400: session budget reached (budget_reached); raise the budget with sessions.update before sending more events
+...
+  sessions.update(budget=27 cents) -> session.updated (budget 27 cents), and the paused turn resumed:
+  stop_reason=end_turn; 6 of 6 assessments written, 13 model requests, list cost 11 cents
 ```
 
-Note the step 3 line explaining where `session.usage` came from: the typed stream skipped it and the history supplied
-it, which is the consolidation pattern doing its job. The mock bills the session uncached and does not resume a paused
-session when the budget changes; the platform caches history and resumes automatically. *Live, watch:* the
-`session.status_running` -> `idle` rhythm between custom tool calls, the Console's view of the session, and the real
-list cost including running time.
+The agent update is lab 02's compare-and-set on a platform resource: an update that names the version it was based
+on either lands or gets a 409, and the loser re-reads and re-applies its change - while the session keeps the version
+it was pinned to. Note the step 3 line explaining where `session.usage` came from: the typed stream skipped it and the
+history supplied it, which is the consolidation pattern doing its job. The session caches its own history, so after
+the first request its prompt is mostly cache reads. The budget stopped the second session after the request that
+crossed six cents; a `user.message` was refused, and only the budget change - based on the consumed list cost, not
+the old cap - resumed the paused turn. The mock's 400 message is its own; the platform's names the settle events it
+accepts. *Live, watch:* the `session.status_running` -> `idle` rhythm between custom tool calls, the Console's view
+of the session and of the agent's versions, and the real list cost including running time.
 
 ### Lab 06 - `06_managed_coordinator.py`: the hosted twin
 
@@ -650,6 +668,8 @@ list cost including running time.
 ```
   a 'campaign-director' whose roster holds recall-lead -> 400: multiagent.agents: only one level of delegation is allowed; 'recall-lead' carries its own roster
 ...
+  session.resources - Files API uploads mounted into the container at creation: /workspace/campaign/units.json (10 kB), /workspace/campaign/resources.json (11 kB)
+...
   record_plan #1: 7 recorded (7 scheduled), 4 rejected
     - KP100-2608-0002: slot FSE-01-2026-09-21-08 is no longer free (status booked)
     - KP250-2608-0007: slot FSE-02-2026-09-21-08 is no longer free (status booked)
@@ -657,24 +677,31 @@ list cost including running time.
     - KP250-2608-0003: slot FSE-01-2026-09-21-13 is no longer free (status booked)
   record_plan #2: 4 recorded (4 scheduled), 0 rejected
 ...
-  agent              thread   status  input tok  output tok  list cost
-  -----------------  -------  ------  ---------  ----------  ---------
-  recall-lead        primary  idle    62,642     6,702       48c
-  unit-investigator  child    idle    4,379      829         4c
-  unit-investigator  child    idle    4,337      468         3c
-  unit-investigator  child    idle    4,337      468         3c
-  schedule-planner   child    idle    11,118     1,477       9c
-  schedule-planner   child    idle    5,288      839         5c
-  recall-lead        child    idle    2,181      160         1c
-  session: 22 model requests, 94,282 input / 10,943 output tokens, list_cost 74 cents of a 200-cent budget (exact $0.7450)
+  agent              thread   status  prompt tok  cache read  output tok  list cost
+  -----------------  -------  ------  ----------  ----------  ----------  ---------
+  recall-lead        primary  idle    62,642      50,252      6,702       27c
+  unit-investigator  child    idle    4,379       785         829         4c
+  unit-investigator  child    idle    4,337       764         468         3c
+  unit-investigator  child    idle    4,337       764         468         3c
+  schedule-planner   child    idle    11,118      5,434       1,477       8c
+  schedule-planner   child    idle    5,288       1,149       839         5c
+  recall-lead        child    idle    2,181       0           160         2c
+  session: 22 model requests, 94,282 prompt tokens (59,148 read from the cache) and 10,943 output; list_cost 52 cents of a 200-cent budget (exact $0.5227)
+...
+  architecture          scheduled  requests  prompt tok  output tok  cost     cost uncached  latency*  largest prompt
+  --------------------  ---------  --------  ----------  ----------  -------  -------------  --------  --------------
+  self-hosted (lab 01)  11/11      41        84,000      9,764       $0.3548  $0.6641        79s       3,266
+  hosted (this lab)     11/11      22        94,282      10,943      $0.5227  $0.7450        233s      12,390
 ```
 
 The first planner's thread carries twice the tokens of the second because it was asked to re-plan - threads persist,
-and the follow-up re-read its first task. The last row is the QA copy of the lead (the roster's `self`). In step 5 the
-self-hosted swarm needs 41 requests and the hosted one 22, at similar like-for-like cost; the hosted mock bills uncached,
-so compare the "cost uncached" column. `--planners 1` removes the conflict (16 requests, $0.4396). *Live, watch:* the
-asynchronous rhythm - `send_to_agent` returning at once and the reports arriving in later coordinator turns - and the
-threads' own streams in the Console.
+and the follow-up re-read its first task. The last row is the QA copy of the lead (the roster's `self`). Every thread
+caches its own history: the lead, which re-reads its growing conversation on every turn, pays for four fifths of its
+prompt at the cache-read price. In step 5 the self-hosted swarm needs 41 requests and $0.3548, the hosted one 22
+requests and $0.5227: fewer, bigger requests, because the lead is the hub every report and commit passes through, plus
+the re-plan the conflict cost. `--planners 1` removes the conflict (16 requests, $0.3060 - lab 07's last row). *Live,
+watch:* the asynchronous rhythm - `send_to_agent` returning at once and the reports arriving in later coordinator
+turns - and the threads' own streams in the Console.
 
 ### Lab 07 - `07_multi_agent_eval_and_decision.py`: the evaluation and the decision
 
@@ -688,19 +715,22 @@ threads' own streams in the Console.
 ```
   configuration              success  requests  tokens processed  cost as run  cost uncached  $ per success
   -------------------------  -------  --------  ----------------  -----------  -------------  -------------
-  one agent                  9/11     34        186,860           $0.3386      $1.0959        $0.1218
-  self-hosted swarm, naive   11/11    48        147,040           $0.7267      $1.1380        $0.1035
-  self-hosted swarm, tuned   11/11    41        93,764            $0.3548      $0.6641        $0.0604
-  hosted swarm, 2 planners   11/11    22        105,225           $0.7450      $0.7450        $0.0677
-  hosted swarm, one planner  11/11    16        56,002            $0.4396      $0.4396        $0.0400
+  one agent                  9/11     34        186,860           $0.3386      $1.0959        $0.0376
+  self-hosted swarm, naive   11/11    48        147,040           $0.7267      $1.1380        $0.0661
+  self-hosted swarm, tuned   11/11    41        93,764            $0.3548      $0.6641        $0.0323
+  hosted swarm, 2 planners   11/11    22        105,225           $0.5227      $0.7450        $0.0475
+  hosted swarm, one planner  11/11    16        56,002            $0.3060      $0.4396        $0.0278
+...
+  cost multiplication over one agent, as run: naive 2.15x, tuned 1.05x, hosted 1.54x (two planners) and 0.90x (one planner)
+  uncached, one agent would cost 3.2x its bill and the tuned swarm 1.9x: the cache prices exactly the single agent's re-reading of its context
 ...
   configuration              coordination tokens  share  made of                                             largest prompt  latency*
   -------------------------  -------------------  -----  --------------------------------------------------  --------------  --------
   one agent                  0                    0%     -                                                   8,223           215s
   self-hosted swarm, naive   58,772               40%    28,936 coordinator + 23,584 briefs + 6,252 reports  11,486          163s
   self-hosted swarm, tuned   12,459               13%    9,190 coordinator + 887 briefs + 2,382 reports      3,266           79s
-  hosted swarm, 2 planners   79,032               75%    71,685 coordinator + 5,131 briefs + 2,216 reports   12,390          236s
-  hosted swarm, one planner  37,356               67%    33,636 coordinator + 1,888 briefs + 1,832 reports   7,591           154s
+  hosted swarm, 2 planners   79,032               75%    71,685 coordinator + 5,131 briefs + 2,216 reports   12,390          233s
+  hosted swarm, one planner  37,356               67%    33,636 coordinator + 1,888 briefs + 1,832 reports   7,591           153s
 ...
   one agent / KP250-2608-0007: visit 2026-09-24 after remedy_by 2026-09-23
     started at: one agent, turn 30
@@ -715,12 +745,14 @@ threads' own streams in the Console.
     to KC2-2608-0001 in the same commit; both planned from the snapshot mounted at session start
 ```
 
-Read the two cost columns together: as run, the self-hosted swarms paid with a warm cache (the tuned one 1.05x the
-single agent, the naive one 2.15x); like-for-like at uncached list prices every swarm here is cheaper than one agent,
-because one agent re-reads its growing context on every turn. The hosted swarm's coordination share is high because the
-lead is the hub - every report comes back to it and every commit is written by it. *Live, watch:* whether Claude
-reproduces the single agent's contamination on your own traces, how the costs move with real caching on both sides,
-and what the critical path looks like when the threads truly run in parallel.
+Read the two cost columns together. As run - every configuration with prompt caching - the tuned swarm costs 1.05x
+the single agent and the naive one 2.15x, but per *successful* unit the single agent is the dearer of the two
+($0.0376 against $0.0323), because two of its eleven bookings are wrong. Uncached, one agent would cost 3.2x its
+bill: most of what it processes is its own growing context, re-read on every turn, and the cache prices exactly that at
+a tenth. The hosted swarm's coordination share is high because the lead is the hub - every report comes back to it
+and every commit is written by it. *Live, watch:* whether Claude reproduces the single agent's contamination on your
+own traces, how the costs move with real cache hit rates on both sides, and what the critical path looks like when
+the threads truly run in parallel.
 
 ---
 

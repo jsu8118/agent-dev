@@ -22,7 +22,8 @@ What to observe
     * rebuild() returns the messages array this worker held in memory, byte for byte; the first course's loop
       holds the same conversation but not the same bytes (an explicit "is_error": false).
     * A second RunStore opened on the same file sees the run, its status, its reply and its cost; the
-      in-memory loop's AgentResult.messages died with its process.
+      in-memory loop's AgentResult.messages died with its process. Creating the run again returns it
+      unchanged and logs nothing (still one run.created event).
 """
 # test: expect=identical: True
 # test: expect=run.created
@@ -178,8 +179,9 @@ def step_second_process(store_path: str, run_id: str, result_messages_len: int) 
     print(f"A second RunStore on {Path(store_path).name}: status={run.status}, turns={run.result['turns']}, "
           f"reply={d1.short(run.result['reply'], 60)!r}")
     again = other.create("support", run_id=run_id)
-    print(f"store.create(run_id={run_id!r}) again -> status={again.status}: creation is idempotent, so a ticket "
-          "delivered twice by the mail gateway is one run, not two.")
+    created = len(other.events(run_id, types=("run.created",)))
+    print(f"store.create(run_id={run_id!r}) again -> status={again.status}, run.created events: {created}: creation "
+          "is idempotent, so a ticket delivered twice by the mail gateway is one run, not two.")
     statuses = [e["status"] for e in other.events(run_id, types=("run.status",))]
     print(f"Status transitions recorded in the log: pending -> {' -> '.join(statuses)}")
 

@@ -21,10 +21,10 @@ Run
 What to observe
     * Step 1: the scorer is code: expected properties per unit from the dataset and the campaign rules, checked
       against the desk's bookings; no agent grades itself.
-    * Step 2: the scoreboard. One agent is the cheapest as run and books two safety units after their deadline; the
-      naive swarm fixes that at about twice the cost, the difference being mostly coordination; the tuned swarm keeps
-      the fix at close to one agent's cost; the hosted swarm with two parallel planners pays for its commit conflicts,
-      and with one planner it does not.
+    * Step 2: the scoreboard. One agent is cheap as run - the cache carries its long context - but books two safety
+      units after their deadline; the naive swarm fixes that at about twice the cost, the difference being mostly
+      coordination; the tuned swarm keeps the fix at close to one agent's cost; the hosted swarm with two parallel
+      planners pays for its commit conflicts, and with one planner it is the cheapest row.
     * Step 3: attribution: each failure and each repaired incident traced to the agent, the turn and the tool call or
       thread where it started - read from the logs, not from the answer key.
     * Step 4: the decision table, with the numbers above and the ownership questions the numbers cannot answer.
@@ -43,7 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from advanced.lib.durable import DurableRunner, RunStore  # noqa: E402
-from labkit import MODEL, cost_usd, get_client, header, step, wrap  # noqa: E402
+from labkit import MODEL, get_client, header, step, wrap  # noqa: E402
 
 import _day4 as d4  # noqa: E402
 
@@ -113,14 +113,14 @@ def run_hosted(client, planners: int) -> dict:
     session_id, _, commits, events, _ = lab06.run_hosted(client, desk, planners=planners)
     spend = d4.session_spend(client, session_id)
     timeline = lab06.hosted_timeline(events)
-    lead_tokens = sum(t.usage.input_tokens + t.usage.output_tokens for t in client.beta.sessions.threads.list(session_id)
-                      if t.agent.name == lab06.LEAD)
+    lead_tokens = sum(d4.prompt_tokens(u) + u["output_tokens"] for u in (d4.usage_tokens(t.usage) for t in
+                      client.beta.sessions.threads.list(session_id) if t.agent.name == lab06.LEAD))
     briefs = sum(_count(" ".join(b.text for b in e.content)) * timeline["requests"].get(e.to_session_thread_id, 0)
                  for e in events if e.type == "agent.thread_message_sent" and e.to_agent_name != lab06.LEAD)
     reports = sum(_count(" ".join(b.text for b in e.content))
                   for e in events if e.type == "agent.thread_message_received" and e.from_agent_name != lab06.LEAD)
-    tokens = spend["input_tokens"] + spend["cache_read_input_tokens"] + spend["cache_creation_input_tokens"] + spend["output_tokens"]
-    uncached = cost_usd({"input_tokens": tokens - spend["output_tokens"], "output_tokens": spend["output_tokens"]}, MODEL)
+    tokens = d4.prompt_tokens(spend) + spend["output_tokens"]
+    uncached = d4.uncached_cost(spend)
     return {"name": f"hosted swarm, {'one planner' if planners == 1 else f'{planners} planners'}",
             "plans": lab06.final_plans(commits), "desk": desk, "events": events,
             "commits": commits, "requests": spend["requests"], "tokens": tokens, "cost": spend["cost"], "uncached": uncached,
@@ -224,16 +224,18 @@ def main() -> None:
     for r in results:
         ok = r["score"]["ok"]
         rows.append([r["name"], f"{ok}/11", r["requests"], f"{r['tokens']:,}", d4.money(r["cost"]), d4.money(r["uncached"]),
-                     d4.money(r["uncached"] / ok) if ok else "-"])
+                     d4.money(r["cost"] / ok) if ok else "-"])
     print(d4.table(rows, ["configuration", "success", "requests", "tokens processed", "cost as run", "cost uncached",
                           "$ per success"]))
     single, naive, tuned, hosted2, hosted = results
-    print("  'cost uncached' prices every token at list price with no cache - like-for-like, because the hosted mock does")
-    print("  not simulate the platform's caching; '$ per success' uses it. 'cost as run' is what the runs paid here.")
-    print(f"  cost multiplication over one agent - like-for-like: naive {naive['uncached'] / single['uncached']:.2f}x, tuned "
-          f"{tuned['uncached'] / single['uncached']:.2f}x, hosted {hosted2['uncached'] / single['uncached']:.2f}x (two planners) and "
-          f"{hosted['uncached'] / single['uncached']:.2f}x (one); as run with caching (self-hosted only): naive "
-          f"{naive['cost'] / single['cost']:.2f}x, tuned {tuned['cost'] / single['cost']:.2f}x")
+    print("  'cost as run' is what each run paid with prompt caching - the self-hosted requests carry cache_control, the")
+    print("  hosted session caches its own history - and '$ per success' divides it by the units booked correctly.")
+    print("  'cost uncached' prices the same tokens with no cache: how much of each bill the cache carries.")
+    print(f"  cost multiplication over one agent, as run: naive {naive['cost'] / single['cost']:.2f}x, tuned "
+          f"{tuned['cost'] / single['cost']:.2f}x, hosted {hosted2['cost'] / single['cost']:.2f}x (two planners) and "
+          f"{hosted['cost'] / single['cost']:.2f}x (one planner)")
+    print(f"  uncached, one agent would cost {single['uncached'] / single['cost']:.1f}x its bill and the tuned swarm "
+          f"{tuned['uncached'] / tuned['cost']:.1f}x: the cache prices exactly the single agent's re-reading of its context")
     rows = []
     for r in results:
         share = r["coordination"] / r["tokens"] if r["tokens"] else 0.0
@@ -243,7 +245,7 @@ def main() -> None:
     print()
     print(d4.table(rows, ["configuration", "coordination tokens", "share", "made of", "largest prompt", "latency*"]))
     print(f"  coordination tokens: naive swarm {naive['coordination']:,} vs tuned {tuned['coordination']:,} "
-          f"({naive['coordination'] / tuned['coordination']:.1f}x); the naive swarm cost {naive['uncached'] / tuned['uncached']:.2f}x the tuned one.")
+          f"({naive['coordination'] / tuned['coordination']:.1f}x); the naive swarm cost {naive['cost'] / tuned['cost']:.2f}x the tuned one.")
     print("  * modelled critical path (workers and threads in parallel; labs/_day4.py LATENCY_ASSUMPTIONS) - not a measurement.")
     print(wrap("Coordination tokens = every token the coordinator processes + every brief token a worker reads (re-read on "
                "each of its turns) + every report token a worker writes for the coordinator. They exist only because the "
@@ -279,11 +281,12 @@ def main() -> None:
     rows = []
     for label, r in (("one agent", single), ("self-hosted swarm (tuned)", tuned), ("hosted swarm (one planner)", hosted)):
         ok = max(r["score"]["ok"], 1)
-        rows.append([label, f"{r['score']['ok']}/11", d4.money(r["uncached"] / ok), f"{r['uncached'] / single['uncached']:.2f}x",
+        rows.append([label, f"{r['score']['ok']}/11", d4.money(r["cost"] / ok), f"{r['cost'] / single['cost']:.2f}x",
                      f"{r['coordination'] / r['tokens']:.0%}", f"{r['largest']:,}", f"{r['latency']:.0f}s"])
     print(d4.table(rows, ["decision", "success", "$ per success*", "x one agent*", "coordination share", "largest prompt",
                           "latency**"]))
-    print("  * like-for-like (uncached) list prices; live, compare the bills you actually pay, caching included.")
+    print("  * as run, prompt caching included on both sides; live, compare the bills you actually pay (the platform also")
+    print("    bills a session's running time).")
     print("  ** modelled critical path, not a measurement.")
     print(wrap("Read the cost column with care: the hosted swarm is cheaper here because of how its work is shaped - "
                "workers read a mounted snapshot in bulk and one commit books everything - not because it is hosted; a "
@@ -300,7 +303,7 @@ def main() -> None:
                f"cut to {tuned['latency']:.0f}s - and only once the coordination bill is under control: the naive swarm spent "
                f"{naive['coordination'] / naive['tokens']:.0%} of its tokens on coordination, {naive['coordination'] / tuned['coordination']:.1f}x "
                f"what the tuned swarm needed for the same result, and the hosted swarm's two parallel planners needed "
-               f"{hosted2['requests'] - hosted['requests']} more requests and {hosted2['uncached'] / hosted['uncached']:.1f}x the cost of one "
+               f"{hosted2['requests'] - hosted['requests']} more requests and {hosted2['cost'] / hosted['cost']:.1f}x the cost of one "
                "planner to reach the same 11 bookings. The capstone (advanced/day7_capstone/reference) is where the "
                "self-hosted branch of this decision goes next.", "  "))
     sessions = [r for r in results if r["name"].startswith("hosted")]

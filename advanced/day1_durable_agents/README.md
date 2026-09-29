@@ -65,7 +65,7 @@ rule-based stand-in, while the stores, the logs, the leases, the effects, the sa
 code - crashes are simulated with `crash_at` and a `BaseException`, so they leave exactly what a dead process
 leaves. Each lab keeps its runs in SQLite files under `.runs/advanced/day1/`; open them with any SQLite client
 and read the `events` table while you work. With `ANTHROPIC_API_KEY` set, the same scripts call Claude; the
-simulated total of the seven labs is about $1.83, of which lab 02 (about twenty runs of the same ticket, some on
+simulated total of the seven labs is about $1.82, of which lab 02 (about twenty runs of the same ticket, some on
 Claude Fable 5.1) is $0.77. The runner sends the first course's support-agent request shape through
 `client.beta.messages.create`: automatic caching plus server-side refusal fallbacks (`fallbacks="default"`, beta
 `server-side-fallback-2026-07-01`); when a beta graduates, expect the header to stop being required and the
@@ -98,9 +98,9 @@ log:
 | - | `create(run_id)` (idempotent: the same id returns the same run) | `pending` |
 | `pending` | a worker acquires the run's lease | `running` |
 | `running` | the model ends its turn | `completed` |
-| `running` | the turn limit (the shipped runner's only failure transition: an exception leaves the run `running`, for a sweeper) | `failed` |
+| `running` | the turn limit, or a model call the API rejects (a 4xx no retry fixes, logged as `model.error`); any other exception leaves the run `running`, for a sweeper | `failed` |
 | `running` | a tool raises `ApprovalRequired` | `waiting_approval` |
-| `waiting_approval` | `decide()`, from any process | `pending` |
+| `waiting_approval` | `decide()` or `expire()`, from any process | `pending` |
 | `running`, lease expired (its worker died) | a sweeper acquires the lease | `running`, on another worker |
 | any non-final status | `cancel()` (exercise 9) | `cancelled` |
 
@@ -133,9 +133,10 @@ truth, tables are a cache of it). For an agent run the facts are:
 | `run.created` | at intake | kind, input (message, channel-verified sender, ticket) | the first user message |
 | `run.status` | every transition | status, error | dashboards, stuck-run detection |
 | `model.response` | right after the call, before any tool runs | turn, the full content (thinking blocks with signatures, text, tool_use), stop_reason, usage | the assistant turns; the bill |
+| `model.error` | when the API rejects a model call (a 4xx no retry fixes) | turn, HTTP status, message | why the run failed |
 | `tool.started` | before a tool runs | tool_use_id, name, input | "was it attempted?" - the in-flight question |
 | `tool.result` | when the tool returns | tool_use_id, the exact string sent back, is_error | the tool_result blocks |
-| `approval.requested` / `.decided` | when a tool asks; when a person decides | the action; who decided, the note | the approvals UI, the audit |
+| `approval.requested` / `.decided` | when a tool asks; when a person decides or a sweeper expires it | the action; the outcome, who, the note | the approvals UI, the audit |
 | yours: `saga.*`, `approval.escalated`, `run.cancelled`, ... | when your code needs them | anything | sagas, sweepers, cancellation |
 
 `rebuild()` folds the log into `(messages, results by tool_use_id, turns, results replayed)`. Two properties
@@ -153,14 +154,15 @@ run three ways:
 ```
 resume variant                       claude-opus-5: first resumed request         claude-fable-5-1
 faithful (the log's bytes)           read 2,828 write   105 -> completed          completed
-tool results re-serialised (JSONB)   read 2,747 write   186 -> completed          400 messages.3.content.0: The block is bound to a different conversation.
-redeploy: new system prompt (v2)     read     0 write 2,949 -> completed          400 messages.1.content.0: The block is bound to a different conversation.
+tool results re-serialised (JSONB)   read 2,747 write   186 -> completed          400 messages.3.content.0: The block is bound to a different conversation. Run failed.
+redeploy: new system prompt (v2)     read     0 write 2,949 -> completed          400 messages.1.content.0: The block is bound to a different conversation. Run failed.
 ```
 
 The second row is a storage bug you can ship without noticing: Postgres `jsonb` (like any column that normalises
 JSON) re-orders object keys, so the tool results come back as the same data in different bytes. Store what you
 will send back to the model as exact text (`text` or `json`). The third row is a deploy: new code picked up an
-in-flight run and sent it the new system prompt.
+in-flight run and sent it the new system prompt. No retry can fix either 400, so the runner logs a `model.error`
+event and fails the run instead of leaving it `running` for a sweeper to retry forever.
 
 **Versioning.** The log outlives the code that wrote it. Pin what a run started with - the prompt version, the
 tool set, the model - on the run, keep old versions loadable until their runs drain, and give new versions to new
@@ -187,7 +189,7 @@ turns need no snapshots, while a coordinator that runs for weeks does.
 | state | event history; workflow code replayed deterministically | a state machine (Amazon States Language) and its execution history | orchestrator code replayed from history | a session: event history, a container, checkpoints | your event log |
 | the agent loop is | a workflow; every model call and tool call an activity (they are not deterministic) | a loop of Task states; a Lambda calls the model | an orchestrator calling activities | Anthropic's, server-side | your runner |
 | side effects | activities: at-least-once with retry policies | tasks retried by each state's `Retry` | activities: at-least-once | hosted tools run in the session's container; custom tools run on your side | `ctx.effect()` and keys |
-| waiting for a person | signals and updates, durable timers | `.waitForTaskToken` callbacks with heartbeat and timeout | `WaitForExternalEvent` plus durable timers | the session idles with `requires_action` until `user.tool_confirmation` or `user.custom_tool_result` | `ApprovalRequired`, `decide()`, sweepers |
+| waiting for a person | signals and updates, durable timers | `.waitForTaskToken` callbacks with heartbeat and timeout | `WaitForExternalEvent` plus durable timers | the session idles with `requires_action` until `user.tool_confirmation` or `user.custom_tool_result` | `ApprovalRequired`, `decide()` / `expire()`, sweepers |
 | limits you meet | history size (continue-as-new), payload size, determinism rules | 256 KB per state's payload, 25,000 history events, one-year executions | determinism rules, replay cost as history grows | the platform's quotas and session pricing | whatever your database handles |
 | in-flight versioning | patching, worker versioning | versions and aliases | your job (side-by-side deployments) | sessions pin an agent version | your job (pin versions per run) |
 | **you still own** | idempotent activities, byte-exact transcripts across activities, approval semantics | the same | the same | custom tools and their idempotency, approval records, reconnecting to the stream (history fetch + dedupe by event id), a ticket -> session table (session creation takes no idempotency key) | everything, including the sweeper |
@@ -213,9 +215,10 @@ email.
    stable across resumes because the tool_use id comes from the logged model response. A key minted at call time
    (`uuid4()`) is useless - a retry gets a new one. Business keys ("one refund per RMA") deduplicate *across*
    runs and belong to the tool, not the runtime (exercise 5).
-2. **A local record: the effects table.** `effect_begin` claims the key (`started`), `commit` stores the result
-   (`done`). On resume, `done` replays the stored result; `started` means **in flight**: a worker died between the
-   claim and the commit, and the outcome is unknown.
+2. **A local record: the effects table.** `effect_begin` claims the key (`started`, in one `INSERT OR IGNORE`, so
+   two claimants cannot both win), `commit` stores the result (`done`). On resume, `done` replays the stored
+   result; `started` means **in flight**: a worker died between the claim and the commit, and the outcome is
+   unknown.
 3. **The key pushed to the system of record.** Only the system that received the call knows whether it happened.
    With the key downstream, "in flight" becomes a lookup: found - commit it; not found - do it now, same key.
 
@@ -312,30 +315,41 @@ transaction. Compensation logic belongs in code.
 
 **The mechanics.** A tool that needs a person raises `ApprovalRequired({"summary": ...})`. The runner records an
 approval (`approval.requested`), sets the run to `waiting_approval` and returns - no thread, no lease, no model call
-while it waits. Any process that can open the store decides and sets the run back to `pending`; deciding twice is a
-no-op (the first decision wins - sequentially: `decide()` reads, then writes, so two simultaneous deciders need the
-claim of exercise 10). A worker then calls `resume_after_decision()`, which answers the waiting tool call by
-executing the approved action under its own key, `<run>:<tool_use>:approved`, or by returning the rejection as a
-tool error the model must explain, and then continues the loop.
+while it waits. Any process that can open the store settles it - `decide()` for a person, `expire()` for a sweeper -
+and the run goes back to `pending`. Settling is a conditional update (`... WHERE status = 'pending'`), so the first
+decision wins even when two people click at once, and a second click changes nothing. The next worker's `run()`
+answers the settled approval before the loop continues: an approved action executes once, under its own key
+`<run>:<tool_use>:approved`, and a rejection or an expiry becomes a tool error the model must explain.
 
-**The dispatcher rule.** A queue consumer that simply calls `run()` on every pending run gets this wrong. Lab 05,
-step 3:
+**Why the runtime answers the decision, not the consumer.** Lab 05, step 3, first runs a copy of the case on a
+runner with that step switched off - the runtime as it was before it answered decisions itself:
 
 ```
-a naive queue consumer calls run() on the decided run (a copy of the same case):
+before the runtime answered decisions itself, a worker calling run() on the decided run (a copy):
   status=waiting_approval turns=3 replayed_tools=2 executed_tools=0 approval=apr_... | approvals now: ['approved', 'pending'] | refunds: []
 ```
 
 `run()` found `issue_refund` without a result and executed it again without the approval, so the gate asked
-again: the manager's decision is ignored and a second request waits in their queue. A decided but unanswered
-approval must go to `resume_after_decision()` (`_day1.decided_but_unanswered()` is the check; the Day 7 reference
-dispatcher does the same).
+again: the manager's decision was ignored and a second request waited in their queue. As long as a decision is
+answered only by a special resume call, some queue consumer eventually makes the ordinary one. So the rule lives
+where every path passes, in `run()`. On the real run the same plain call answers the approval first - the refund's
+`tool.result` lands before turn 4 is generated:
+
+```
+    13  approval.decided    approved by ops.manager: inspection report checked
+    14  run.status          pending
+    15  run.status          running
+    16  tool.result         issue_refund ok 174 chars: {"refund_id": "RF-7001", "amount_usd": 9188.5, "status": ...
+    17  model.response      turn 4  stop=end_turn  blocks=['thinking', 'text']  tools=[]  in=0 cache_w=103 cache_r=2944 out=254
+    18  run.status          completed
+```
 
 **Timeouts and escalation** are policy, applied by a sweeper on a schedule: escalate an approval nobody picked up
 (lab 05: after 4 hours), expire one nobody decided (after 2 days). **Expiry is not a refusal** - nobody said no -
-so record it as expiry, and make sure what the customer is told has a record behind it: in lab 05 the expired tool
-error makes the model open a finance escalation (`ESC-4101`, P2) before replying "overdue". Two cron hosts running
-the same sweeper page twice unless each action is claimed first (exercise 10).
+so record it as expiry: `store.expire()` gives the approval the status `expired`, and the run's tool error says
+"Not decided in time". Make sure what the customer is told has a record behind it: in lab 05 that tool error makes
+the model open a finance escalation (`ESC-4101`, P2) before replying "overdue". Two cron hosts running the same
+sweeper page twice unless each action is claimed first (exercise 10).
 
 **The alternatives.**
 
@@ -354,34 +368,37 @@ the same sweeper page twice unless each action is claimed first (exercise 10).
 **The idea.** A lease is a lock with an expiry. `acquire()` is one atomic statement - `UPDATE runs SET lease_owner
 = ?, lease_until = ? WHERE run_id = ? AND (lease_owner IS NULL OR lease_owner = ? OR lease_until < ?)` - so two
 workers that pick the same run cannot both win it, and a winner that dies does not hold it forever. A worker
-extends its lease with **heartbeats**; `DurableRunner` heartbeats before every model call, and anything slower than
-the TTL - a slow tool, a long model call - must heartbeat from inside (`ctx.store.heartbeat(...)`). Leases come
-from distributed locking; the TTL is a bet that a worker which has not heartbeated for that long is dead.
+extends its lease with **heartbeats**; `DurableRunner` heartbeats before every model call (and stops with
+`LeaseLost` when one fails), and anything slower than the TTL - a slow tool, a long model call - must heartbeat
+from inside (`ctx.store.heartbeat(...)`). Leases come from distributed locking; the TTL is a bet that a worker
+which has not heartbeated for that long is dead.
 
 **The false takeover.** When a step outlives the TTL without heartbeats, another worker takes a run whose first
 worker is still alive. Lab 06, step 2:
 
 ```
 without heartbeats: worker-b at t=1.6 s ACQUIRED the lease (it had expired at t=1.0 s) and ran the run: status=completed turns=3 replayed_tools=1 executed_tools=1
-  worker-a finished too: status=completed turns=3 replayed_tools=0 executed_tools=2
-  log: model.response=4, tool.result=3, tool.started=3
+  worker-a: LeaseLost: run lease-heartbeat-off: lease taken over by another worker; stopping
+  log: model.response=3, tool.result=3, tool.started=3
   worker-a's heartbeat() answers, in order: True x2, False x1
+  get_order results in the log: 2 - the same tool_use answered twice
 ```
 
-Worker-a's last heartbeat answered False - it could have known - but the runner ignores the answer, so the zombie
-logged a second result and paid for a second turn 3. In the mock the duplicate turn is identical; **live, the
-second worker's model responses carry different tool_use ids, so every later write gets a different idempotency
-key** and can happen twice. The remedy is **fencing**: every write is conditional on still holding the lease, in
-the same statement, so a zombie's first write after a takeover fails (exercise 11; Martin Kleppmann's "fencing
-tokens" are the version-number form of the same idea). What fencing cannot stop - an effect the zombie already
-caused in another system - is covered by idempotency keys and, where you own the downstream system, by a lease
-version it can check.
+Worker-a's heartbeat before its turn-3 model call answered False, and the runner stopped it with `LeaseLost` - no
+second turn 3. But the `get_order` result it wrote on returning from the slow tool had already landed: the zombie
+learns it is one at its next heartbeat, one step too late. Whatever it does in that step happens twice - the rest of
+its tool round, or, when the takeover happens during a long model call, a whole turn; **live, that turn's tool_use
+ids differ from the new owner's, so its writes carry different idempotency keys** and can happen twice. The remedy
+is **fencing**: every write is conditional on still holding the lease, in the same statement, so a zombie's first
+write after a takeover fails (exercise 11; Martin Kleppmann's "fencing tokens" are the version-number form of the
+same idea). What fencing cannot stop - an effect the zombie already caused in another system - is covered by
+idempotency keys and, where you own the downstream system, by a lease version it can check.
 
 **Stuck-run detection.** `stuck(older_than_s)` is a query, not a judgement: status `running` and a lease that
 expired more than `older_than_s` ago. Between a `kill -9` and the expiry, the run looks alive (lab 06, step 3:
 `stuck(older_than_s=0) now: []`, then `['lease-killed']` after the TTL). A sweeper calls `run()` on what it
-finds; the lease acquire is the only coordination needed. It must also pick up runs that are `pending` (decided
-approvals, new work) - through the dispatcher rule of section 5.
+finds; the lease acquire is the only coordination needed. It must also pick up runs that are `pending` (settled
+approvals, new work) - the same `run()` handles both.
 
 **Choosing the numbers.** With a heartbeat every *h*, a TTL *T* (commonly 3*h*) and a sweep every *S*, a dead
 worker's run is resumed between *T* and *T + S* after its last heartbeat: 30-90 s for *h* = 10 s, *T* = 30 s,
@@ -480,7 +497,7 @@ carried no idempotency key. (4) Approvals were threads. (5) Nothing could say wh
 |---|---|---|
 | D1 a crash or deploy loses no run | run record created at intake with `run_id` derived from the ticket; every step logged first; any worker resumes | lab 02: every crash point ends with one refund; a resumed run reads the crashed worker's cache |
 | D2 no side effect twice | effects table + keys pushed to the ledger and the carrier; business keys in the tools | lab 03's matrix; lab 04's saga |
-| D3 approvals wait up to five business days | `ApprovalRequired`, an approvals UI on the same store, the dispatcher rule, an SLA sweeper with escalation and expiry | lab 05 |
+| D3 approvals wait up to five business days | `ApprovalRequired`, an approvals UI on the same store, `run()` answering settled approvals, an SLA sweeper that escalates and then expires (`store.expire()`) | lab 05 |
 | D4 two workers never run one run | leases, heartbeats inside slow tools, a stuck-run sweeper, fenced writes | lab 06, exercise 11 |
 | D5 any run can be explained later | the log is the transcript, the bill and the audit; replay and forks offline; traces exported from the log | lab 07 |
 | D6 durability costs no tokens | rebuilds are byte-exact, so a resume reads the prompt cache; prompts pinned per run across deploys | lab 02, steps 4-5 |
@@ -522,8 +539,8 @@ issued?") through `DurableRunner`, with a `SupportDesk` over a shared copy of th
    differs. Whether the real API normalises that particular field is not something to rely on: re-send the bytes
    you sent.
 5. **What survives the process.** A second `RunStore` on the same file sees the run, its reply and its status
-   transitions; creating the run again with the same `run_id` returns the existing run (a ticket delivered twice is
-   one run).
+   transitions; creating the run again with the same `run_id` returns the existing run and logs nothing new
+   (`status=completed, run.created events: 1`): a ticket delivered twice is one run.
 
 ### Lab 02 - `02_crash_and_resume.py`: crash and resume
 
@@ -538,10 +555,9 @@ issued?") through `DurableRunner`, with a `SupportDesk` over a shared copy of th
    after_model  4       12 model.response      running         3        0           0 refunds=1  completed
    ```
    (five of the ten rows). The resumer executes exactly the tools the log has no result for, calls the model for
-   exactly the turns the log lacks, and there is always one refund. The last row is the case the shipped runner
-   does not handle: the final answer was logged but the run never marked completed; re-sending that conversation
-   would be an assistant prefill (a 400 on current models), so `FinishingRunner` in `_day1.py` completes it from the
-   log with no model call.
+   exactly the turns the log lacks, and there is always one refund. In the last row the final answer was logged but
+   the run never marked completed; re-sending that conversation would be an assistant prefill (a 400 on current
+   models), so the runner completes the run from the log with no model call.
 3. **The response was lost** (the process died with the turn-2 response in memory): `model calls for the whole run:
    5 (4 turns + 1 repeated)`. The log makes tool execution at-most-once; it cannot make a model call exactly-once.
 4. **Append-only.** With the mock's cache cleared so that worker-a is the only writer:
@@ -552,7 +568,8 @@ issued?") through `DurableRunner`, with a `SupportDesk` over a shared copy of th
    worker-b's first request extends worker-a's last one byte for byte and reads exactly what it cached.
 5. **What breaks it** - the table in section 2: re-serialised tool results and a new system prompt collapse the
    cache on Claude Opus 5 and are rejected on Claude Fable 5.1 (the lab enables the check explicitly, so live it
-   behaves the same on any account). Fix: exact bytes in storage, versions pinned per run.
+   behaves the same on any account); the rejected run ends `failed`, with a `model.error` event. Fix: exact bytes in
+   storage, versions pinned per run.
 6. **The naive alternative** - re-running the first course's loop: six model calls instead of four, a different
    reply, and one refund only thanks to the tool's own checks.
 
@@ -596,21 +613,23 @@ step 5 is the durable-direction table of section 4; step 6 is "just retry" (`res
 
 Midland Oil confirms the $9,188.50 refund on RMA-7001 - above the agent's $2,500 limit.
 
-1. **Parked:** `store: status=waiting_approval lease_owner=None refunds=[]`; another worker that picks the run up returns
-   at once with `model calls made: 0`.
+1. **Parked:** `store: status=waiting_approval lease_owner=None refunds=[]`; another worker that picks the run up
+   returns at once with `model calls made: 0`.
 2. **Decided from another process:** a second `RunStore` on the same file (the approvals UI) lists the run, shows the
    action and approves; a second click changes nothing.
-3. **The dispatcher rule** - the naive consumer re-parks the run (section 5); `resume_after_decision()` completes it:
+3. **Resumed with a plain `run()`** - a copy of the case on a runner without the runtime's decision step re-parks
+   the run (section 5); today's runtime completes it:
    ```
      worker-b: status=completed turns=4 replayed_tools=3 executed_tools=0
      reply:
        Your refund of $9,188.50 for RMA-7001 has been issued (reference RF-7001, approved by
        ops.manager). It will reach your original payment method within 10 business days.
    ```
-   (`executed_tools=0`: the approved refund ran inside `resume_after_decision()` as a keyed effect and was logged;
-   `run()` then replayed it.)
+   (`executed_tools=0`: the approved refund ran before the loop, inside `run()`, as a keyed effect and was logged;
+   the loop then replayed it with the other two results.)
 4. **Rejected:** the tool result names who declined and why; the reply says so and promises nothing it cannot keep.
-5. **The sweeper:** escalated at +4 hours, expired at +2 days, and the resumed model escalates before replying:
+5. **The sweeper:** escalated at +4 hours, expired with `store.expire()` at +2 days (the log: `expired by
+   sla-sweeper: no decision within 2 days`), and the resumed model escalates before replying:
    ```
      sweep at +4 hours    -> ['sd-T-1207-overdue: escalated to finance_director after 4 h']
      sweep at +1 day      -> ['nothing to do']
@@ -625,8 +644,9 @@ Midland Oil confirms the $9,188.50 refund on RMA-7001 - above the agent's $2,500
 Four scenarios with worker threads on the same on-disk store (wall-clock timings are real; they take about ten
 seconds). Step 1: `worker-b: RuntimeError: run lease-contention is leased by another worker`. Step 2: the
 heartbeat comparison in section 6 (with heartbeats every 0.25 s the second worker is refused; without them the lease
-lapses mid-tool). Step 3: a worker killed like `kill -9` (its lease is not released); `stuck()` is empty until the
-TTL passes, then the takeover finishes the run with the logged result replayed. Step 4, the sweeper's view:
+lapses mid-tool, and worker-a stops with `LeaseLost` one duplicate result later). Step 3: a worker killed like
+`kill -9` (its lease is not released); `stuck()` is empty until the TTL passes, then the takeover finishes the run
+with the logged result replayed. Step 4, the sweeper's view:
 
 ```
 run            status     lease_owner  lease    action
@@ -635,8 +655,8 @@ sweep-dead     running    worker-x     expired  take over
 sweep-done     completed  None         -        leave alone
 ```
 
-Live, the model calls take seconds, so the takeover happens later in wall-clock terms, and the duplicate turns of a
-false takeover carry different tool_use ids.
+Live, the model calls take seconds, so the takeover happens later in wall-clock terms, and a takeover during a long
+model call lets the zombie log a whole turn - with tool_use ids of its own - before its next heartbeat stops it.
 
 ### Lab 07 - `07_replay_and_time_travel.py`: replay and time travel
 
@@ -681,10 +701,11 @@ false takeover carry different tool_use ids.
    must reuse them, and dedup windows must outlive your longest resume - or have a business-key fallback.
 5. Multi-system actions are sagas: compensatable steps, a pivot, retriable steps - and the saga's direction is
    logged, or a crash after its rollback sends it forward over its own undo.
-6. A human approval is a durable wait: a row, not a thread. Decide from any process, resume with
-   `resume_after_decision()`, never with a plain `run()`, and treat expiry as expiry.
-7. Leases keep two workers off one run only while every slow step heartbeats; fence writes on the lease, because a
-   zombie does not know it is one - and, live, its duplicate turns carry new idempotency keys.
+6. A human approval is a durable wait: a row, not a thread. Decide from any process, let the runtime answer the
+   decision on the next `run()` (a rule every consumer would otherwise have to remember), execute the approved
+   action under its own key, and treat expiry as expiry.
+7. Leases keep two workers off one run only while every slow step heartbeats. A zombie learns it is one at its next
+   heartbeat (`LeaseLost`) - one step too late - so fence writes on the lease and key every effect.
 8. Detection latency is TTL plus sweep interval; graceful shutdown that releases leases beats tuning both.
 9. The log is the flight recorder: replay reads, stub writes, fork at a tool result, export traces from the log,
    and redact at the export boundary, never in the log.
