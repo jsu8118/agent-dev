@@ -18,10 +18,10 @@ Run
 
 What to observe
     * The haiku canary's 81.8% comes from 11 traces: its interval spans 52%-95% (step 1).
-    * Eyeballing five runs of a 30-scenario eval declares a difference that does not exist about a third of the
-      time, and misses a real 5-point drop most of the time (step 2).
-    * On the simulation the paired interval is about half as wide as the unpaired one; on the traces it is not,
-      and step 3 says why (one noisy binary attempt per ticket on the new arm).
+    * Eyeballing five runs of a 30-scenario eval sees a 3-point "difference" between two IDENTICAL agents about
+      40% of the time, and still misses a real 5-point drop about 30% of the time (step 2).
+    * On the simulation the paired interval is about a quarter narrower than the unpaired one (worth ~1.8x the
+      scenarios); on the traces it is not, and step 3 says why (one noisy binary attempt per ticket on the new arm).
     * McNemar on ticket majorities screams p = 0.004 for a difference the paired bootstrap cannot see - a test
       whose assumption (equal replication) is violated (step 3).
     * A 5-point regression from 74% needs about 1,300 traces per arm unpaired (step 4).
@@ -33,6 +33,7 @@ What to observe
 from __future__ import annotations
 
 import argparse
+import math
 import random
 import statistics
 import sys
@@ -87,14 +88,17 @@ def step_eyeballing(seed: int, scenarios: int = 30, reps: int = 5, trials: int =
         a, b = mean_pass(0.90), mean_pass(0.85)
         drop_seen += (a - b) >= 0.03
     spread = d6.percentile(diffs_same, 95)
+    runs = scenarios * reps
     print(f"Two IDENTICAL 90% agents, {scenarios} scenarios x {reps} runs each, {trials:,} simulated comparisons:")
     print(f"  |difference| between the two means: median {d6.pct(statistics.median(diffs_same))}, 95th percentile {d6.pct(spread)}")
     print(f"  an eyeball that calls >= 3 points 'a difference' is fooled {d6.pct(same_wrong / trials)} of the time")
-    print(f"A REAL 5-point regression (90% -> 85%), same setup: the eyeball sees a >= 3-point drop in only "
-          f"{d6.pct(drop_seen / trials)} of comparisons.")
-    lo, hi = d6.wilson(round(0.9 * scenarios * reps), scenarios * reps)
-    print(f"  The interval on one arm's {scenarios * reps} runs is {d6.ci_text(lo, hi)}: a noise floor of about "
-          f"{d6.pct((hi - lo) / 2)}, wider than the effect.")
+    print(f"A REAL 5-point regression (90% -> 85%), same setup: the eyeball sees a >= 3-point drop in "
+          f"{drop_seen:,} of {trials:,} comparisons\n  and misses it in the other {trials - drop_seen:,} - while "
+          "'seeing' differences that do not exist almost as often. A seen drop is barely evidence.")
+    lo, hi = d6.wilson(round(0.9 * runs), runs)
+    half_diff = d6.Z95 * math.sqrt(2 * 0.9 * 0.1 / runs)
+    print(f"  One arm's {runs} runs: 95% interval {d6.ci_text(lo, hi)} (+/-{d6.pct((hi - lo) / 2)}). The DIFFERENCE of two such arms\n"
+          f"  has a noise floor of +/-{d6.pct(half_diff)} - wider than the 5-point effect, so no eyeball can call it.")
     print("  Reps average out sampling noise on the scenarios you have; they add no coverage of scenarios you lack.")
 
 
@@ -163,7 +167,8 @@ def step_power(traces: list[dict]) -> None:
     d6.table([[f"{drop:.0%}", d6.sample_size_two_proportions(p, p - drop)] for drop in (0.03, 0.05, 0.10, 0.15)],
              ["drop to detect", "traces per arm"])
     print("  Lab 01's eval set has 120 items in total: as a release gate on the aggregate it can only see a collapse.")
-    print("\nPaired design (same scenarios before and after; McNemar): the cost is driven by how much the change churns")
+    print("\nPaired design (same scenarios before and after; McNemar): only discordant pairs carry information, so the\n"
+          "  cost is driven by how much the change churns, not by the baseline rate (the first course's Day 6 numbers):")
     d6.table([[label, d6.paired_sample_size(fail, fix)] for label, fail, fix in
               (("pure regression: 5% flip to fail, 0% to pass", 0.05, 0.0),
                ("churn: 6% flip to fail, 1% to pass", 0.06, 0.01),
@@ -209,8 +214,11 @@ def step_pass_k(seed: int, n_runs: int = 10, k: int = 3) -> None:
           "RET-hard-2 fails all three attempts every time, which no aggregate shows. Kestrel's\n  customers see every "
           "attempt, so per-scenario pass^k is the number to report; pass@k belongs to workflows where a\n  checker picks "
           "the best of k (generate three drafts, keep the one that passes).")
-    print(f"  With 5 runs per scenario the pass^3 estimate can only be 0, 10%, 30%, 60% or 100% - 'run it five times'\n"
-          "  gives a number, not an estimate. Ten runs per scenario is the practical floor for k = 3.")
+    five = sorted({d6.pass_hat_k(5, c, k) for c in range(6)})
+    ten = sorted({d6.pass_hat_k(10, c, k) for c in range(11)})
+    print(f"  With 5 runs per scenario the pass^{k} estimate can only be {', '.join(d6.pct(v, 0) for v in five)} - "
+          f"'run it five times'\n  gives a number, not an estimate; 10 runs allow {len(ten)} values. Size the runs "
+          f"to the k you report.")
 
 
 # ------------------------------------------------------------------------------------------ step 6 (optional)

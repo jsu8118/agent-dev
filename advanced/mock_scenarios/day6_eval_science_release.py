@@ -238,15 +238,26 @@ def triage(req: MockRequest) -> Reply:
 
 
 # =========================================================================================== migration probe
-# A deliberately small two-turn agent: look the order up, then answer from the tool result. Lab 07 sends the same
-# conversation to different models (a migration, then a rollback) to see what the API does with the request shape
-# and with thinking blocks produced by another model; the policy itself only has to behave like a normal agent.
+# A deliberately small agent: when a tool is forced it calls that tool with arguments shaped by its schema; otherwise
+# it looks the order up with get_order (if offered) and answers from the tool result. Lab 07 sends the same request
+# shapes to different models (a migration, a rollback, a prompt hotfix mid-conversation) to see what the API does
+# with them and with thinking blocks produced elsewhere; the policy itself only has to behave like a normal agent.
 @scenario("adv.day6.migration_probe", match=lambda r: PROBE_MARK in r.system_text, priority=10)
 def migration_probe(req: MockRequest) -> Reply:
     asked = sorted(set(re.findall(r"\bSO-\d{5}\b", req.first_user_text)))
     order_id = asked[0] if asked else "SO-10312"
-    if not req.called("get_order"):
-        return use_tools(tool("get_order", order_id=order_id), preface=None)
-    result = req.calls("get_order")[-1].result_json() or {}
-    status = result.get("status", "in transit")
-    return say(f"Order {order_id} is {status}. [probe answer from the tool result, model {req.model}]")
+    choice = req.tool_choice or {}
+    forced = choice.get("name") if choice.get("type") == "tool" else (
+        req.tool_names[0] if choice.get("type") == "any" and req.tool_names else None)
+    if forced and not req.called(forced):
+        schema = (req.tool_definition(forced) or {}).get("input_schema") or {}
+        args = synthesize(schema, root=schema, text=req.first_user_text) if schema else {}
+        if isinstance(args, dict) and "order_id" in (schema.get("properties") or {}):
+            args["order_id"] = order_id
+        return use_tools(tool(forced, **(args if isinstance(args, dict) else {})))
+    if req.has_tool("get_order") and not req.called("get_order"):
+        return use_tools(tool("get_order", order_id=order_id))
+    if req.called("get_order"):
+        result = req.calls("get_order")[-1].result_json() or {}
+        return say(f"Order {order_id} is {result.get('status', 'in transit')}. [probe answer from the tool result]")
+    return say(f"Order {order_id}: noted. [probe answer, no tool needed]")

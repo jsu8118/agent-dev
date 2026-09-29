@@ -17,12 +17,12 @@ Run
     python advanced/day6_eval_science_release/labs/01_mining_evals_from_traces.py --size 160
 
 What to observe
-    * The three label sources disagree with each other more than you would like (step 2): a label is a
-      measurement with its own error, and the eval set records WHICH measurement produced each label.
+    * The three label sources agree 77-88% of the time but only kappa 0.45-0.67 beyond chance (step 2): a label
+      is a measurement with its own error, and the eval set records WHICH measurement produced each label.
     * Random sampling leaves rare cells empty (step 4); the stratified draw guarantees a floor per cell and
       reports coverage per category and per arm.
-    * A random split BY TRACE leaks: dozens of tickets land on both sides (step 5). The ticket-level split
-      from splits.json leaks nothing.
+    * A random split BY TRACE leaks: 13 tickets land on both sides and most held-out items have a sibling in
+      training (step 5). The ticket-level split from splits.json leaks nothing.
     * The manifest (step 6) carries a content hash, the label policy and the counts - what you version.
 """
 # test: expect=stratified
@@ -84,16 +84,20 @@ def step_labels(traces: list[dict]) -> None:
                  lambda t: not t["review"]["issues"], lambda t: not t["outcome"]["human_edited"]),
                 ("csat", "edit", lambda t: t["outcome"]["csat"] is not None,
                  lambda t: t["outcome"]["csat"] >= 4, lambda t: not t["outcome"]["human_edited"])]
-    rows = []
+    rows, agreements, kappas = [], [], []
     for a, b, both, fa, fb in overlaps:
         s = [t for t in traces if both(t)]
         xa, xb = [fa(t) for t in s], [fb(t) for t in s]
         agree = sum(x == y for x, y in zip(xa, xb)) / len(s)
-        rows.append([f"{a} vs {b}", len(s), d6.pct(agree), f"{d6.cohens_kappa(xa, xb):.2f}",
-                     d6.pct(d6.rate(xa)), d6.pct(d6.rate(xb))])
-    d6.table(rows, ["signals", "traces with both", "agreement", "kappa", f"pass rate (1st)", "pass rate (2nd)"])
-    print("  Agreement in the 70s and kappa around 0.5: the signals see the same replies differently. A label\n"
-          "  derived from them carries that noise, so record its SOURCE and prefer the strongest one available.")
+        kappa = d6.cohens_kappa(xa, xb)
+        agreements.append(agree)
+        kappas.append(kappa)
+        rows.append([f"{a} vs {b}", len(s), d6.pct(agree), f"{kappa:.2f}", d6.pct(d6.rate(xa)), d6.pct(d6.rate(xb))])
+    d6.table(rows, ["signals", "traces with both", "agreement", "kappa", "pass rate (1st)", "pass rate (2nd)"])
+    print(f"  Raw agreement {d6.pct(min(agreements), 0)}-{d6.pct(max(agreements), 0)} looks fine; kappa "
+          f"{min(kappas):.2f}-{max(kappas):.2f} (agreement beyond chance) says the signals\n"
+          "  see the same replies differently. A label derived from them carries that noise, so record its SOURCE\n"
+          "  and prefer the strongest one available.")
     sources = Counter(d6.weak_label(t)[1] for t in traces)
     passes = defaultdict(list)
     for t in traces:
@@ -164,8 +168,12 @@ def step_sampling(pool: list[dict], size: int, seed: int) -> list[dict]:
     print(f"  Empty (category, version) cells: random {empty_random}, stratified {empty_strat}. A regression that lives "
           "in one cell is invisible when that cell is empty.")
     print("\nCoverage per arm (stratified draw):")
-    d6.table([[arm, sum(d6.arm_of(t) == arm for t in pool), sum(d6.arm_of(t) == arm for t in stratified)]
-              for arm in d6.ARMS], ["arm", "pool", "in eval set"])
+    per_arm = {arm: sum(d6.arm_of(t) == arm for t in stratified) for arm in d6.ARMS}
+    d6.table([[arm, sum(d6.arm_of(t) == arm for t in pool), per_arm[arm]] for arm in d6.ARMS],
+             ["arm", "pool", "in eval set"])
+    thin = min(per_arm, key=per_arm.get)
+    print(f"  The strata were (category, version), so arms got whatever fell out: {thin} has {per_arm[thin]} item(s).\n"
+          "  Stratify on the units you will compare - if the question is 'which arm', the arm is a stratum.")
     return stratified
 
 
