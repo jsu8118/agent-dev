@@ -284,9 +284,15 @@ def test_expired_approval_resumes_with_a_refusal():
     store, ledger = RunStore(), Ledger()
     run = store.create("billing", input={"message": "Please apply the $4000 credit for the failed KP-250-S."})
     outcome = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(run.id)
-    assert store.expire(outcome.approval_id).status == "pending"
+    assert store.cancel_approval(outcome.approval_id, by="customer").status == "pending"      # withdrawn: settled as cancelled
+    assert store.approvals(run.id)[0]["status"] == "cancelled"
+    other = store.create("billing", input={"message": "Please apply the $4000 credit for the failed KP-250-S."})
+    parked = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(other.id)
+    assert store.expire(parked.approval_id).status == "pending"
+    resumed_other = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(other.id)
+    assert "Not decided in time" in resumed_other.reply
     resumed = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(run.id)
-    assert resumed.status == "completed" and "could not apply" in resumed.reply and "Not decided in time" in resumed.reply
+    assert resumed.status == "completed" and "could not apply" in resumed.reply and "Cancelled by customer" in resumed.reply
     assert ledger.calls == 0
 
 

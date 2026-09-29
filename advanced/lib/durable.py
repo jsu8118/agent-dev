@@ -197,6 +197,10 @@ class RunStore:
         """Settle a pending approval as expired (a sweeper's job); the run resumes and the tool call gets a refusal."""
         return self._settle(approval_id, "expired", by=by, note=note)
 
+    def cancel_approval(self, approval_id: str, *, by: str, note: str = "") -> "Run":
+        """Settle a pending approval as cancelled (the request was withdrawn); the run resumes and the tool call gets a refusal."""
+        return self._settle(approval_id, "cancelled", by=by, note=note)
+
     def _settle(self, approval_id: str, status: str, *, by: str, note: str) -> "Run":
         assert status in APPROVAL_OUTCOMES, status
         conn = self._connect()
