@@ -50,6 +50,11 @@ Cross-cutting references: [cheat sheet](docs/cheatsheet.md) · [decision tables]
 A suggested pace is one day per theme (≈ 7 hours: ~40% concepts, ~60% labs and exercises). Days 1–3 are
 foundational; Days 4–6 can be taken in any order after them.
 
+> **Finished this course?** The second week continues in [`advanced/`](advanced/README.md): *Advanced Agent
+> Engineering with Claude* — durable agents, tools at scale, long-horizon context, orchestration at scale,
+> security engineering, evaluation science and release engineering, and a multi-day recall-campaign capstone.
+> Same dataset, same toolkit, same conventions; the mock API grew the surfaces it needs.
+
 ---
 
 ## Setup
@@ -120,12 +125,14 @@ python scripts/smoke_live.py --cap 3         # live smoke test (needs a key)
 python data/generate_data.py                 # regenerate the dataset (deterministic)
 python day7_capstone/starter/run_starter_check.py   # capstone progress, milestone by milestone
 docker compose up copilot                    # the capstone's HTTP service on http://localhost:8080
+make test-advanced                           # the advanced course only (its tests, labs and solutions)
 ```
 
 ## Repository layout
 
 ```
 day1_foundations/ ... day7_capstone/   lessons, labs, exercises, solutions
+advanced/                              the second week (see advanced/README.md): its own days, data, library, docs
 data/                                  the Kestrel dataset (see data/README.md) + deterministic generator
 kestrel/                               Kestrel's "internal library": policy engine, knowledge base, support tools & agent
 labkit/                                course toolkit: client factory (live/mock), mock Claude API, metering, tracing

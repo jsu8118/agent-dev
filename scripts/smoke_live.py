@@ -35,6 +35,16 @@ LABS = [
     ("day5_mcp_agent_sdk/labs/03_claude_with_mcp_tools.py", []),
     ("day6_evals_guardrails_production/labs/02_eval_harness.py", ["--limit", "8"]),
     ("day7_capstone/reference/run_pipeline.py", ["--ticket", "T-1301", "--ticket", "T-1801"]),
+    # the advanced course (select with --only advanced; ~$5 on claude-opus-5)
+    ("advanced/day1_durable_agents/labs/02_crash_and_resume.py", []),
+    ("advanced/day2_tools_at_scale/labs/03_wide_agent.py", []),
+    ("advanced/day2_tools_at_scale/labs/05_programmatic_tool_calling.py", []),
+    ("advanced/day3_long_horizon_context/labs/03_preserved_thinking_binding.py", []),
+    ("advanced/day3_long_horizon_context/labs/07_cache_engineering_at_scale.py", []),
+    ("advanced/day4_orchestration_at_scale/labs/05_managed_agents_sessions.py", []),
+    ("advanced/day5_security_engineering/labs/02_injection_defense_in_depth.py", []),
+    ("advanced/day6_eval_science_release/labs/03_pairwise_judges_and_bradley_terry.py", []),
+    ("advanced/day7_capstone/reference/run_campaign.py", ["--fresh", "--days", "2", "--decide", "approve", "--db", "smoke.db"]),
 ]
 TOTAL_RE = re.compile(r"^\s*TOTAL\s+calls=\d+\s+\$(\d+\.\d+)", re.M)
 
