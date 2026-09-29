@@ -12,15 +12,16 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "advanced" / "day7_capstone"))
 
-from advanced.lib.durable import Crash, ToolContext          # noqa: E402
-from labkit import get_client, runs_dir                       # noqa: E402
-from reference.recall import security                         # noqa: E402
-from reference.recall.config import DEFAULT                   # noqa: E402
-from reference.recall.orchestrator import Orchestrator, load_replies   # noqa: E402
-from reference.recall.store import CampaignStore              # noqa: E402
-from reference.recall.tools import CampaignDesk               # noqa: E402
+# Imported through the installed `advanced` package: the first course's capstone also has a top-level `reference`
+# package on its own sys.path entry, and one pytest process must be able to import both.
+from advanced.day7_capstone.reference.recall import security                          # noqa: E402
+from advanced.day7_capstone.reference.recall.config import DEFAULT                    # noqa: E402
+from advanced.day7_capstone.reference.recall.orchestrator import Orchestrator, load_replies   # noqa: E402
+from advanced.day7_capstone.reference.recall.store import CampaignStore               # noqa: E402
+from advanced.day7_capstone.reference.recall.tools import CampaignDesk                # noqa: E402
+from advanced.lib.durable import Crash, ToolContext                                   # noqa: E402
+from labkit import get_client, runs_dir                                               # noqa: E402
 
 
 def _store(name: str) -> CampaignStore:
