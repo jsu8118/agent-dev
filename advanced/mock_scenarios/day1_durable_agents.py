@@ -2,13 +2,16 @@
 
 Labs 01, 02, 06 and 07 run Kestrel's real support agent (its system prompt and its toolset), which the first
 course's `kestrel.support_agent` policy already drives - nothing to add for them.  The policies below cover the
-toolsets the other labs introduce:
+toolsets the other labs and exercises introduce:
 
-* `adv.day1.credit`    - the goodwill-credit agent of lab 03 (get_order -> post_credit -> reply);
-* `adv.day1.saga`      - the replacement saga of lab 04 (get_order -> check_return_eligibility ->
-                         arrange_replacement -> escalate on failure -> reply);
-* `adv.day1.approvals` - lab 05's refund flow, which must report a *declined* approval to the customer instead
-                         of escalating again the way the first course's policy does for any refund error.
+* `adv.day1.credit`       - the goodwill-credit agent of lab 03 (get_order -> post_credit -> reply);
+* `adv.day1.saga`         - the replacement saga of lab 04 (get_order -> check_return_eligibility ->
+                            arrange_replacement -> escalate on failure -> reply);
+* `adv.day1.approvals`    - lab 05's refund flow (and exercises 9-10), which must report a *declined* approval to
+                            the customer instead of escalating again the way the first course's policy does for any
+                            refund error, and escalate an *expired* one so the promised follow-up exists;
+* `adv.day1.stock_audit`  - a long run for exercises 3 and 12: one count_stock call per turn over the locations
+                            the planner lists, then a summary (40 locations = 41 turns).
 
 Like every scenario policy, they derive everything they "say" from the request: amounts come from the customer's
 text, references from tool results, and an error result changes the next step - so the labs exercise the real
@@ -137,13 +140,38 @@ def approvals_policy(req: MockRequest) -> Reply:
                    f"{refund.get('refund_id')}, approved by {refund.get('approved_by', 'our team')}). It will reach "
                    "your original payment method within 10 business days.")
     error = _json(refund_call).get("error", "")
-    if "no decision" in error.lower() or "timed out" in error.lower():
-        return say(f"The refund of {_money(due)} for {rma_id} is still awaiting approval from our finance team; "
-                   "I've flagged it as overdue and you'll hear from a colleague within one business day. "
-                   "Nothing has been refunded yet.")
+    if "no decision" in error.lower() or "expired" in error.lower():
+        # An expired approval is not a refusal: hand it to a person, so the follow-up the customer is promised exists.
+        if not req.called("escalate_to_human"):
+            return use_tools(tool("escalate_to_human", queue="finance", priority="P2", order_id=rma.get("order_id"),
+                                  summary=f"Refund of {_money(due)} on {rma_id} got no approval decision before it "
+                                          "expired; the customer is waiting. Please decide and reply."))
+        esc = _json(_last(req, "escalate_to_human"))
+        return say(f"The refund of {_money(due)} for {rma_id} is still awaiting approval. I've escalated it to our "
+                   f"finance team as overdue (reference {esc.get('escalation_id', 'pending')}; "
+                   f"{esc.get('sla', 'they will respond shortly')}). Nothing has been refunded yet.")
     if error.startswith("Declined by"):
         note = error.split(":", 1)[1].split(". Tell the customer")[0].strip() if ":" in error else "not approved"
         return say(f"I'm sorry - the refund of {_money(due)} for {rma_id} could not be approved at this time "
-                   f"({note}). A member of our team will contact you about the next steps; nothing has been "
-                   "charged or refunded in the meantime.")
+                   f"({note}). Nothing has been refunded. If you have questions about the inspection, reply to "
+                   f"this email quoting {rma_id}.")
     return say(f"I couldn't issue the refund for {rma_id} yet: {error}")
+
+
+# ---------------------------------------------------------------------------- exercises 3 and 12: a long run
+@scenario("adv.day1.stock_audit", match=lambda r: "<adv_day1_stock_audit>" in r.system_text, priority=20)
+def stock_audit_policy(req: MockRequest) -> Reply:
+    locations = re.findall(r"\b([A-Z0-9]+(?:-[A-Z0-9]+)*)@(WH-[A-Z]+)\b", req.first_user_text)
+    done = {(c.input.get("sku"), c.input.get("warehouse")) for c in req.calls("count_stock")}
+    todo = [loc for loc in locations if loc not in done]
+    if todo:
+        sku, warehouse = todo[0]
+        return use_tools(tool("count_stock", sku=sku, warehouse=warehouse))
+    low = []
+    for call in req.calls("count_stock"):
+        data = _json(call)
+        if data.get("at_or_below_reorder"):
+            low.append(f"{data['sku']}@{data['warehouse']} ({data['available']} available, reorder point "
+                       f"{data['reorder_point']})")
+    return say(f"Audit complete: {len(done)} locations checked. At or below the reorder point: "
+               + ("; ".join(low) if low else "none") + ".")

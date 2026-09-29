@@ -1,15 +1,23 @@
 """Mock policies for Day 4 - multi-agent orchestration at scale (advanced/day4_orchestration_at_scale/labs).
 
 Every policy matches on a marker in the system prompt (`<adv_day4_...>`), so it never captures another day's
-requests, and derives everything it "says" from the request: tool results, the user message, the envelope it
-was sent.  The policies never read the dataset.  Scripted misbehaviour (a worker that loops, a worker that
-never stops exploring) is opt-in through marker attributes and is labelled [mock] by the labs that use it.
+requests, and derives everything it "says" from the request: tool results, the task message, the envelope it
+was sent, the files it read from a session workspace.  The policies never read the dataset.  They do not
+think: they apply the campaign's rules to what the request contains.  Scripted misbehaviour is opt-in through
+marker attributes and is labelled [mock] by the labs that use it.
 
 Section index
     unit planning ....... the worker (one batch of units) and the single agent (all units, one context)
-    coordinator ......... list -> dispatch -> collect -> summary (labs 01, 02, 03, 07)
-    A2A roles ........... coordinator triage, quality lead, unit workers (lab 04)
-    hosted agents ....... Managed Agents worker, coordinator roster, investigator, planner (labs 05, 06)
+    coordinator ......... list -> dispatch -> collect -> summary (labs 01, 03, 07)
+    agent-to-agent ...... coordinator triage, quality lead, unit workers reading typed envelopes (lab 04)
+    hosted agents ....... Managed Agents assessor (lab 05); lead, investigator, planner (labs 06, 07)
+
+One behaviour worth knowing before you read lab 07's numbers: the unit planner answers a unit's scheduling
+question from the most recent slot search it can see for the same region and skill.  Inside one worker's
+context (one customer: one risk class, one deadline) that is harmless.  In the single agent's context, where
+eleven units with three different deadlines share one conversation, it reuses a search made for another unit
+- the cross-item contamination a long, repetitive context invites.  It is a scripted stand-in for a failure
+mode, not a measurement of a model: live, measure it on your own traces.
 """
 
 from __future__ import annotations
@@ -44,7 +52,7 @@ def _json_between(text: str, tag: str) -> Any:
 
 def _serials_in(text: str) -> list[str]:
     seen: list[str] = []
-    for s in re.findall(r"\b(?:KP\d{3}|KC\d)-\d{4}-\d{4}\b", text):
+    for s in re.findall(r"\b(?:KP\d{3}|KC\d)-\d{4}-\d{4}\b", text or ""):
         if s not in seen:
             seen.append(s)
     return seen
@@ -55,6 +63,61 @@ def _ok(call) -> Any:
     if call is None or call.is_error:
         return None
     return call.result_json()
+
+
+def _json_objects(text: str) -> list[dict]:
+    """Every top-level JSON object in a text (reports mix prose and JSON)."""
+    found: list[dict] = []
+    decoder = json.JSONDecoder()
+    i = 0
+    while i < len(text or ""):
+        j = text.find("{", i)
+        if j < 0:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, j)
+        except ValueError:
+            i = j + 1
+            continue
+        if isinstance(obj, dict):
+            found.append(obj)
+        i = end
+    return found
+
+
+def _json_lines(text: str) -> list[dict]:
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    return out
+
+
+def _latest_task(req: MockRequest) -> tuple[str, int]:
+    """(text, message index) of the most recent user message that carries text - a thread's current task."""
+    for i in range(len(req.messages) - 1, -1, -1):
+        m = req.messages[i]
+        if m.get("role") != "user":
+            continue
+        content = m.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else (content or [])
+        text = "\n".join(b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+        if text.strip():
+            return text, i
+    return "", -1
+
+
+def _calls_since(req: MockRequest, index: int, name: str) -> list:
+    """Tool calls named `name` made after message `index` (the calls that belong to the current task)."""
+    ids: set[str] = set()
+    for m in req.messages[index + 1:]:
+        if m.get("role") == "assistant" and isinstance(m.get("content"), list):
+            ids.update(b.get("id") for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_use")
+    return [c for c in req.calls(name) if c.id in ids]
 
 
 # ============================================================================ unit planning (worker + single agent)
@@ -70,6 +133,7 @@ class _UnitState:
                               if c.input.get("customer_id") == u.get("customer_id") and _ok(c)), None)
         self.parts = next((_ok(c) for c in reversed(req.calls("check_parts"))
                            if c.input.get("kit_sku") == u.get("kit_sku") and _ok(c)), None)
+        # The shortcut described in the module docstring: any search for the same region and skill counts.
         self.slot_calls = [c for c in req.calls("find_engineer_slots") if c.input.get("region") == u.get("region")
                            and c.input.get("skill") == u.get("skill_required")]
         self.reserve_calls = [c for c in req.calls("reserve_kit") if c.input.get("serial") == serial]
@@ -135,17 +199,14 @@ def _next_step(req: MockRequest, st: _UnitState, booked_elsewhere: set[str]) -> 
     if st.reservation is None and not st.gave_up_parts():
         if not st.reserve_calls:
             stock = st.parts["stock"]
-            preferred = st.parts["preferred_warehouse"]
-            candidates = [preferred] + list(st.parts["alternatives"])
+            candidates = [st.parts["preferred_warehouse"]] + list(st.parts["alternatives"])
             warehouse = next((w for w in candidates if stock.get(w, 0) > 0), None)
         else:
             elsewhere = _stock_from_error(st.reserve_calls[-1].result)
             tried = {c.input.get("warehouse") for c in st.reserve_calls}
             warehouse = next((w for w in st.parts["alternatives"] if elsewhere.get(w, 0) > 0 and w not in tried), None)
-        if warehouse is None:
-            pending.append(tool("reserve_kit", kit_sku=u["kit_sku"], warehouse=st.parts["preferred_warehouse"], serial=st.serial))
-        else:
-            pending.append(tool("reserve_kit", kit_sku=u["kit_sku"], warehouse=warehouse, serial=st.serial))
+        pending.append(tool("reserve_kit", kit_sku=u["kit_sku"], warehouse=warehouse or st.parts["preferred_warehouse"],
+                            serial=st.serial))
     if st.booking is None and not st.gave_up_slot():
         tried = {c.input.get("slot_id") for c in st.book_calls}
         latest = _ok(st.slot_calls[-1]) or {}
@@ -187,7 +248,7 @@ def _narrative(plan: dict, st: _UnitState) -> str:
             f"{u.get('remedy')} with kit {u.get('kit_sku')}; the required skill is {u.get('skill_required')} and the visit takes "
             f"about {u.get('visit_hours')} hours. Deadlines: contact by {u.get('contact_by')}, remedy by {u.get('remedy_by')}. "
             f"Interim measure to communicate: {u.get('interim_measure')} Contact: {c.get('name')} ({c.get('role')}, {c.get('email')}). "
-            f"Outcome: {plan['status']}"
+            f"I checked stock at every warehouse and the engineers' calendars before choosing. Outcome: {plan['status']}"
             + (f" - kit reserved at {plan['warehouse']} ({plan['reservation_id']}), engineer {plan['engineer_id']} on "
                f"{plan['visit_start']} ({plan['slot_id']})." if plan["status"] == "scheduled" else f". {plan['notes']}"))
 
@@ -231,13 +292,12 @@ def single_agent(req: MockRequest) -> Reply:
     listing = _ok(req.calls("list_affected_units")[-1]) if req.called("list_affected_units") else None
     if listing is None:
         return use_tools(tool("list_affected_units"), preface="Listing the affected units first.")
-    targets = [u["serial"] for u in listing.get("units", [])]
+    targets = [u["serial"] for u in listing.get("units", [])]           # listing order: the order it was given
     return plan_units(req, targets, report="compact", mode="normal")
 
 
 # ============================================================================ the coordinator
 def _batches(units_: list[dict], batch: str, brief: str, notice: str) -> list[dict]:
-    groups: list[list[dict]] = []
     if batch == "unit":
         groups = [[u] for u in units_]
     else:
@@ -262,8 +322,7 @@ def _batches(units_: list[dict], batch: str, brief: str, notice: str) -> list[di
     return out
 
 
-def _summary(results: dict, stats: dict | None) -> str:
-    plans = results.get("plans") or []
+def _summary(plans: list[dict], stats: dict | None, queue: dict) -> str:
     by_status: dict[str, int] = {}
     kits: dict[str, int] = {}
     late, pending = [], []
@@ -279,9 +338,9 @@ def _summary(results: dict, stats: dict | None) -> str:
     lines.append("Kits reserved by warehouse: " + (", ".join(f"{w} {n}" for w, n in sorted(kits.items())) or "none") + ".")
     lines.append("SLA risks: " + (", ".join(late) if late else "none - every scheduled visit is on or before its remedy_by date") + ".")
     lines.append("Needs a human decision: " + (", ".join(pending) if pending else "nothing") + ".")
-    queued = (results.get("queued") or 0) + (results.get("claimed") or 0)
-    if queued or results.get("failed"):
-        lines.append(f"Not finished: {queued} task(s) still queued, {results.get('failed') or 0} failed - see the queue.")
+    unfinished = (queue.get("queued") or 0) + (queue.get("claimed") or 0)
+    if unfinished or queue.get("failed") or queue.get("dead"):
+        lines.append(f"Not finished: {unfinished} task(s) queued, {queue.get('failed') or queue.get('dead') or 0} failed - see the queue.")
     if stats and stats.get("stopped"):
         lines.append(f"PAUSED: dispatch stopped early ({stats['stopped']}); reporting rather than continuing, per the campaign's stop conditions.")
     return "\n".join(lines)
@@ -300,183 +359,278 @@ def coordinator(req: MockRequest) -> Reply:
                          preface=f"Dispatching {listing.get('count')} units to the workers.")
     stats = _ok(req.calls("dispatch_units")[-1]) or {}
     if not req.called("collect_results"):
-        return use_tools(tool("collect_results"), preface="Collecting the workers' plans.")
+        return use_tools(tool("collect_results"), preface="Collecting the workers' results.")
     results = _ok(req.calls("collect_results")[-1]) or {}
-    return say(_summary(results, stats), complexity=0.5)
+    plans = results.get("plans")
+    if plans is None:                                       # full reports: read them and pull out the plans
+        plans = [o for r in results.get("reports", []) for o in _json_objects(r) if "serial" in o]
+    return say(_summary(plans, stats, results.get("queue") or {}), complexity=0.5)
 
 
 # ============================================================================ agent-to-agent roles (lab 04)
 SAFETY_RE = re.compile(r"injur|sprayed|incident|fluid release|hospital", re.I)
+INTERIM = ("Please keep the unit isolated and the seal-chamber temperature alarm at 70 C; do not run it unattended.")
 
 
 @scenario("adv.day4.a2a", match=lambda r: "<adv_day4_a2a" in r.system_text, priority=10)
 def a2a(req: MockRequest) -> Reply:
     role = _attr(req.system_text, "adv_day4_a2a", "role") or "coordinator"
+    name = _attr(req.system_text, "adv_day4_a2a", "name") or role
     env = _json_between(req.last_user_text or req.first_user_text, "envelope") or {}
     payload = env.get("payload") or {}
     kind = env.get("type")
+    flags = set(payload.get("thread_flags") or [])
     if role == "coordinator":
-        body = payload.get("body", "")
-        if SAFETY_RE.search(body):
-            return json_reply({"classification": "safety_event", "stop_condition": True,
-                               "reason": "the customer reports an operator sprayed with process fluid and a filed incident",
-                               "recommended_pattern": "handoff", "to": "quality-lead",
-                               "also": {"broadcast": "lot_pause", "lot": payload.get("lot")}})
-        return json_reply({"classification": "routine", "stop_condition": False, "recommended_pattern": "none"})
+        if kind == "inbound":
+            body = payload.get("body", "")
+            if "safety_event_open" in flags:
+                return json_reply({"classification": "safety_followup", "stop_condition": False,
+                                   "needs": "quality lead's answer on whether and when the visit can happen"})
+            if SAFETY_RE.search(body):
+                return json_reply({"classification": "safety_event", "stop_condition": True, "lot": payload.get("lot"),
+                                   "reason": "the customer reports an operator sprayed with process fluid and a filed incident",
+                                   "actions": ["involve the quality lead", "pause the lot for every unit worker"]})
+            return json_reply({"classification": "routine", "stop_condition": False})
+        if kind == "result":                                # turn the quality lead's answer into the customer reply
+            return json_reply({"body": payload.get("customer_reply") or "We will come back to you shortly.",
+                               "template": "TPL-RC-01", "hazard_wording_changed": False})
+        return json_reply({"ack": True})
     if role == "quality_lead":
+        if kind == "delegation" and payload.get("kind") == "followup_question":
+            return json_reply({"verdict": "visit_on_hold", "customer_reply": "Thank you for the update. The engineer visit "
+                               "stays on hold until our investigation clears the lot; our quality lead will call you with a "
+                               "date. " + INTERIM})
         if kind == "delegation":
             return json_reply({"verdict": "stop_condition_met", "lot": payload.get("lot"),
-                               "actions": ["pause scheduling for the lot", "page the quality lead", "open incident file",
-                                           "reply to the customer with interim measures only"],
-                               "customer_reply_allowed": False, "owner_after": "coordinator"})
-        if kind == "handoff":
-            return json_reply({"accepted": True, "owner": "quality-lead", "conversation_id": env.get("conversation_id"),
-                               "first_action": "phone the site engineer within the hour; confirm the unit is isolated",
+                               "actions": ["pause scheduling for the lot", "open an incident file", "phone the site engineer"],
                                "customer_reply": "We have received your incident report and stopped the campaign for this "
-                                                 "lot. Our quality lead will call you within the hour. Please keep the unit "
-                                                 "isolated and the seal chamber below 70 C."})
-        if kind == "message":
-            return json_reply({"reply": "Thank you - our quality lead has your incident report; the engineer visit is "
-                                        "on hold until the investigation clears the lot."})
+                                                 "lot while we investigate. " + INTERIM})
+        if kind == "handoff":
+            state = payload.get("state") or {}
+            return json_reply({"accepted": True, "owner": name, "conversation_id": env.get("conversation_id"),
+                               "first_action": f"phone the site engineer within the hour about {state.get('unit')}",
+                               "customer_reply": "We have received your incident report and stopped the campaign for this "
+                                                 "lot. I own your case from now on and will call you within the hour. " + INTERIM})
+        if kind == "inbound":
+            return json_reply({"customer_reply": "Good to hear. The visit stays on hold until the investigation clears the "
+                                                 "lot; I will call you with a date this week. " + INTERIM})
+        return json_reply({"ack": True})
     if role == "unit_worker":
         mine = _serials_in(req.system_text)
         if kind == "broadcast":
-            affected = [s for s in mine if s in (payload.get("serials") or []) or payload.get("lot") in (payload.get("lots_by_serial") or {}).get(s, "")]
-            return json_reply({"ack": True, "worker": _attr(req.system_text, "adv_day4_a2a", "name"),
-                               "paused_serials": affected or mine if payload.get("scope") == "lot" else affected,
-                               "action": "no new bookings for these serials; existing bookings kept pending review"})
-        return json_reply({"ack": True, "note": "no action for this message type"})
+            paused = [s for s in mine if s in (payload.get("serials") or [])]
+            return json_reply({"ack": True, "worker": name, "paused_serials": paused,
+                               "action": "no new bookings for these serials; existing bookings held pending review"})
+        return json_reply({"ack": True})
     return json_reply({"ack": True})
 
 
-# ============================================================================ hosted agents (labs 05, 06)
-def _assessment(u: dict, contact_of: dict[str, dict] | None) -> dict:
-    contact = None
-    if contact_of and u.get("customer_id") in contact_of:
-        c = contact_of[u["customer_id"]]
-        contact = c["site"] if "out of office" in (c.get("notes") or "").lower() else c["primary"]
-    return {"serial": u["serial"], "customer_id": u["customer_id"], "risk_class": u["risk_class"], "remedy": u["remedy"],
-            "kit_sku": u["kit_sku"], "skill": u["skill_required"], "region": u["region"], "contact_by": u["contact_by"],
-            "remedy_by": u["remedy_by"], "contact_id": (contact or {}).get("contact_id"),
-            "interim_measure": u.get("interim_measure")}
+# ============================================================================ hosted agents (labs 05, 06, 07)
+@scenario("adv.day4.hosted_assessor", match=lambda r: "<adv_day4_hosted_assessor" in r.system_text, priority=10)
+def hosted_assessor(req: MockRequest) -> Reply:
+    """Lab 05: one unit at a time - look it up through the client's custom tool, write the assessment into the
+    session's workspace with the built-in `write` tool, then summarize."""
+    task, index = _latest_task(req)
+    targets = _serials_in(task)
+    done: list[dict] = []
+    for serial in targets:
+        call = next((c for c in reversed(_calls_since(req, index, "get_unit")) if c.input.get("serial") == serial), None)
+        if call is None:
+            return use_tools(tool("get_unit", serial=serial), preface=f"Looking up {serial}.")
+        u = _ok(call)
+        if u is None:
+            done.append({"serial": serial, "error": call.result})
+            continue
+        path = f"recall/{serial}.json"
+        if not any(c.input.get("path") == path for c in _calls_since(req, index, "write")):
+            assessment = {k: u.get(k) for k in ("serial", "customer_id", "risk_class", "remedy", "kit_sku", "skill_required",
+                                                "contact_by", "remedy_by", "interim_measure")}
+            return use_tools(tool("write", path=path, content=json.dumps(assessment, indent=1)),
+                             preface=f"Writing the assessment for {serial}.")
+        done.append(u)
+    lines = []
+    for u in done:
+        if "error" in u:
+            lines.append(f"- {u['serial']}: could not be read ({u['error']})")
+        else:
+            lines.append(f"- {u['serial']} ({u['customer_id']}, {u['risk_class']}): {u['remedy']} with kit {u['kit_sku']}, "
+                         f"skill {u['skill_required']}; contact by {u['contact_by']}, remedy by {u['remedy_by']}. "
+                         f"Written to recall/{u['serial']}.json.")
+    return say(f"Assessed {len(done)} unit(s):\n" + "\n".join(lines), complexity=0.3)
 
 
-@scenario("adv.day4.hosted_worker", match=lambda r: "<adv_day4_hosted_worker" in r.system_text, priority=10)
-def hosted_worker(req: MockRequest) -> Reply:
-    serial = (_serials_in(req.first_user_text) or ["?"])[0]
-    unit_call = req.calls("get_unit")[-1] if req.called("get_unit") else None
-    if unit_call is None:
-        return use_tools(tool("get_unit", serial=serial), preface=f"Looking up unit {serial}.")
-    u = _ok(unit_call)
-    if u is None:
-        return say(f"I could not read unit {serial}: {unit_call.result}")
-    assessment = _assessment(u, None)
-    if not req.called("write"):
-        return use_tools(tool("write", path=f"recall/{serial}.json", content=json.dumps(assessment, indent=1)),
-                         preface="Writing the assessment to the workspace.")
-    return say(f"Assessment for {serial} written to recall/{serial}.json: risk class {u['risk_class']}, remedy {u['remedy']} "
-               f"with kit {u['kit_sku']} (skill {u['skill_required']}); contact by {u['contact_by']}, remedy by {u['remedy_by']}. "
-               f"Interim measure: {u['interim_measure']}", complexity=0.3)
+def _contact_for(customer_id: str, contacts: list[dict]) -> dict:
+    c = next((x for x in contacts if x.get("customer_id") == customer_id), {})
+    if "out of office" in (c.get("notes") or "").lower():
+        return c.get("site") or {}
+    return c.get("primary") or {}
 
 
 @scenario("adv.day4.hosted_investigator", match=lambda r: "<adv_day4_hosted_investigator" in r.system_text, priority=10)
 def hosted_investigator(req: MockRequest) -> Reply:
-    targets = _serials_in(req.first_user_text)
-    reads = {c.input.get("path"): c for c in req.calls("read")}
-    needed = [p for p in ("campaign/units.json", "campaign/resources.json") if p not in reads]
-    if needed:
-        return use_tools(*[tool("read", path=p) for p in needed], preface="Reading the campaign files from the shared workspace.")
+    """A worker thread: reads the campaign file the lead shared in the workspace and assesses its batch."""
+    task, index = _latest_task(req)
+    targets = _serials_in(task)
+    read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == "campaign/units.json"), None)
+    if read is None:
+        return use_tools(tool("read", path="campaign/units.json"), preface="Reading the campaign file from the shared workspace.")
     try:
-        units_ = json.loads(reads["campaign/units.json"].result or "[]")
-        resources = json.loads(reads["campaign/resources.json"].result or "{}")
+        data = json.loads(read.result or "")
     except ValueError:
-        return say("The campaign files are not valid JSON; I cannot assess the units.")
-    contact_of = {c["customer_id"]: c for c in resources.get("contacts", [])}
-    rows = [_assessment(u, contact_of) for u in units_ if u["serial"] in targets]
+        return say("campaign/units.json is not valid JSON; I cannot assess the units.")
+    units_ = {u["serial"]: u for u in data.get("units", [])}
+    rows = []
+    for s in targets:
+        u = units_.get(s)
+        if u is None:
+            rows.append({"serial": s, "error": "not in campaign/units.json"})
+            continue
+        contact = _contact_for(u["customer_id"], data.get("contacts", []))
+        rows.append({"serial": s, "customer_id": u["customer_id"], "risk_class": u["risk_class"], "region": u["region"],
+                     "remedy": u["remedy"], "kit_sku": u["kit_sku"], "skill": u["skill_required"],
+                     "contact_id": contact.get("contact_id"), "contact_by": u["contact_by"], "remedy_by": u["remedy_by"]})
     return say("\n".join(json.dumps(r) for r in rows), complexity=0.3)
 
 
 @scenario("adv.day4.hosted_planner", match=lambda r: "<adv_day4_hosted_planner" in r.system_text, priority=10)
 def hosted_planner(req: MockRequest) -> Reply:
-    text = req.first_user_text
-    if not req.called("read"):
-        return use_tools(tool("read", path="campaign/resources.json"), preface="Reading stock and calendars.")
+    """A worker thread: allocates a kit and a slot per assessed unit from the resources snapshot in the workspace.
+    Earliest deadline first; it never reuses a slot or a kit within its own batch - and knows nothing about other
+    planner threads working from the same snapshot."""
+    task, index = _latest_task(req)
+    read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == "campaign/resources.json"), None)
+    if read is None:
+        return use_tools(tool("read", path="campaign/resources.json"), preface="Reading stock and calendars from the workspace.")
     try:
-        resources = json.loads(req.calls("read")[-1].result or "{}")
+        res = json.loads(read.result or "")
     except ValueError:
-        return say("resources.json is not valid JSON.")
-    assessments = [json.loads(line) for line in (_between(text, "assessments") or "").splitlines() if line.strip().startswith("{")]
-    stock = {k["sku"]: dict(k["stock"]) for k in resources.get("kits", [])}
-    free = sorted(resources.get("free_slots", []), key=lambda s: (s["start"], s["slot_id"]))
-    region_wh = {"US-EAST": "WH-EAST", "US-WEST": "WH-WEST", "EU": "WH-EU", "APAC": "WH-EU"}
+        return say("campaign/resources.json is not valid JSON.")
+    assessments = _json_lines(_between(task, "assessments") or "")
+    stock = {k["sku"]: dict(k["stock"]) for k in res.get("kits", [])}
+    wh_for = res.get("warehouse_for_region", {})
+    free = sorted(res.get("free_slots", []), key=lambda s: (s["start"], s["slot_id"]))
     out = []
-    for a in assessments:
-        wh_pref = region_wh.get(a["region"], "WH-EAST")
-        candidates = [wh_pref] + [w for w in sorted(stock.get(a["kit_sku"], {}), key=lambda w: -stock[a["kit_sku"]][w]) if w != wh_pref]
-        warehouse = next((w for w in candidates if stock.get(a["kit_sku"], {}).get(w, 0) > 0), None)
+    for a in sorted(assessments, key=lambda a: (a.get("remedy_by", ""), a.get("serial", ""))):
+        kit = stock.get(a.get("kit_sku"), {})
+        pref = wh_for.get(a.get("region"))
+        candidates = ([pref] if pref else []) + sorted((w for w in kit if w != pref), key=lambda w: (-kit[w], w))
+        warehouse = next((w for w in candidates if kit.get(w, 0) > 0), None)
         if warehouse:
-            stock[a["kit_sku"]][warehouse] -= 1
-        slot = next((s for s in free if s["region"] == a["region"] and a["skill"] in s["skills"] and s["start"][:10] <= a["remedy_by"]), None)
+            kit[warehouse] -= 1
+        slot = next((s for s in free if s["region"] == a.get("region") and a.get("skill") in s["skills"]
+                     and s["start"][:10] <= a.get("remedy_by", "")), None)
         if slot:
             free.remove(slot)
         status = "scheduled" if warehouse and slot else ("waiting_parts" if not warehouse else "pending_schedule")
-        out.append({"serial": a["serial"], "status": status, "kit_sku": a["kit_sku"], "warehouse": warehouse,
+        out.append({"serial": a.get("serial"), "customer_id": a.get("customer_id"), "status": status,
+                    "remedy": a.get("remedy"), "kit_sku": a.get("kit_sku"), "warehouse": warehouse,
                     "engineer_id": (slot or {}).get("engineer_id"), "slot_id": (slot or {}).get("slot_id"),
-                    "visit_start": (slot or {}).get("start"), "remedy_by": a["remedy_by"], "contact_id": a.get("contact_id"),
-                    "sla_ok": bool(slot)})
+                    "visit_start": (slot or {}).get("start"), "contact_id": a.get("contact_id"),
+                    "contact_by": a.get("contact_by"), "remedy_by": a.get("remedy_by"), "sla_ok": bool(slot)})
     return say("\n".join(json.dumps(o) for o in out), complexity=0.4)
+
+
+def _qa_reply(task: str) -> Reply:
+    plans = _json_lines(_between(task, "plans") or "")
+    unscheduled = [p["serial"] for p in plans if p.get("status") != "scheduled"]
+    late = [p["serial"] for p in plans if p.get("status") == "scheduled" and (p.get("visit_start") or "")[:10] > (p.get("remedy_by") or "")]
+    no_contact = [p["serial"] for p in plans if not p.get("contact_id")]
+    verdict = "PASS" if not (unscheduled or late or no_contact) else "ATTENTION"
+    return say(f"QA {verdict}: {len(plans)} unit plans checked; {len(plans) - len(unscheduled)} scheduled with a kit and a slot; "
+               f"late visits: {', '.join(late) or 'none'}; missing contact: {', '.join(no_contact) or 'none'}; "
+               f"not scheduled: {', '.join(unscheduled) or 'none'}.", complexity=0.3)
 
 
 @scenario("adv.day4.hosted_lead", match=lambda r: "<adv_day4_hosted_lead" in r.system_text, priority=10)
 def hosted_lead(req: MockRequest) -> Reply:
-    text = req.first_user_text
-    if text.startswith("QA:"):                                  # a copy of the coordinator (roster entry `self`)
-        plans = [json.loads(line) for line in (_between(text, "plans") or "").splitlines() if line.strip().startswith("{")]
-        missing = [p["serial"] for p in plans if p.get("status") != "scheduled"]
-        return say(f"QA: {len(plans)} unit plans checked; {len(plans) - len(missing)} scheduled with a kit and a slot; "
-                   f"needs attention: {', '.join(missing) if missing else 'none'}. No plan mentions compensation.", complexity=0.3)
-    units_ = _json_between(text, "units") or []
-    resources = _json_between(text, "resources") or {}
+    """The coordinator of the hosted swarm. Data comes from the client's custom tools (the system of record), is
+    shared with the roster through files in the session workspace, and every commit goes back through a custom
+    tool the client validates."""
+    task, _ = _latest_task(req)
+    if task.startswith("QA:"):                                   # a copy of the coordinator (roster entry `self`)
+        return _qa_reply(task)
+    name = _attr(req.system_text, "adv_day4_hosted_lead", "name") or "recall-lead"
+    planners = max(1, int(_attr(req.system_text, "adv_day4_hosted_lead", "planners") or 1))
     if not req.called("list_agents"):
         return use_tools(tool("list_agents"), preface="Checking the roster.")
-    if not req.called("write"):
-        return use_tools(tool("write", path="campaign/units.json", content=json.dumps(units_, indent=1)),
-                         tool("write", path="campaign/resources.json", content=json.dumps(resources, indent=1)),
-                         preface="Sharing the campaign data through the workspace.")
+    if not req.called("get_campaign_data"):
+        return use_tools(tool("get_campaign_data"), tool("get_resources"),
+                         preface="Fetching the campaign data and the current stock and calendars from Kestrel's systems.")
+    data_call = req.calls("get_campaign_data")[-1]
+    data = _ok(data_call) or {}
+    resource_calls = req.calls("get_resources")
+    writes = [c.input.get("path") for c in req.calls("write")]
+    if writes.count("campaign/units.json") == 0:
+        return use_tools(tool("write", path="campaign/units.json", content=data_call.result or "{}"),
+                         tool("write", path="campaign/resources.json", content=resource_calls[0].result or "{}"),
+                         preface="Sharing the campaign data with the roster through the workspace.")
     sends = req.calls("send_to_agent")
-    to_investigator = [c for c in sends if c.input.get("agent") == "unit-investigator"]
-    if not to_investigator:
+    investigations = [c for c in sends if c.input.get("agent") == "unit-investigator"]
+    if not investigations:
         by_customer: dict[str, list[str]] = {}
-        for u in units_:
+        for u in data.get("units", []):
             by_customer.setdefault(u["customer_id"], []).append(u["serial"])
         groups = list(by_customer.values())
         batches = [sum(groups[i::3], []) for i in range(3)]
         return use_tools(*[tool("send_to_agent", agent="unit-investigator",
-                                message=f"Assess units {', '.join(b)} from campaign/units.json and campaign/resources.json in "
-                                        "the shared workspace. Reply with one JSON object per unit (serial, customer_id, "
-                                        "risk_class, remedy, kit_sku, skill, region, contact_by, remedy_by, contact_id).")
-                          for b in batches if b], preface="Three investigators, one batch of customers each.")
-    assessments = []
-    for c in to_investigator:
-        reply = (_ok(c) or {}).get("reply", "")
-        assessments += [line for line in reply.splitlines() if line.strip().startswith("{")]
-    to_planner = [c for c in sends if c.input.get("agent") == "schedule-planner"]
-    if not to_planner:
-        return use_tools(tool("send_to_agent", agent="schedule-planner",
-                              message="Assign a kit warehouse and an engineer slot to each assessed unit using campaign/resources.json "
-                                      "(prefer the region's warehouse; earliest free slot on or before remedy_by; one slot per unit). "
-                                      "Reply with one JSON object per unit.\n<assessments>\n" + "\n".join(assessments) + "\n</assessments>"),
-                         preface="Handing the assessments to the planner.")
-    plans_text = (_ok(to_planner[-1]) or {}).get("reply", "")
-    self_name = _attr(req.system_text, "adv_day4_hosted_lead", "name") or "recall-lead"
-    to_self = [c for c in sends if c.input.get("agent") == self_name]
-    if not to_self:
-        return use_tools(tool("send_to_agent", agent=self_name, message="QA: verify these plans.\n<plans>\n" + plans_text + "\n</plans>"),
-                         preface="Asking a copy of myself for an independent check.")
-    if not req.called("record_plan"):
-        plans = [json.loads(line) for line in plans_text.splitlines() if line.strip().startswith("{")]
+                                message=f"Assess units {', '.join(b)} from campaign/units.json in the shared workspace. Reply "
+                                        "with one JSON line per unit: serial, customer_id, risk_class, region, remedy, "
+                                        "kit_sku, skill, contact_id, contact_by, remedy_by.")
+                           for b in batches if b], preface="Three investigators, one batch of customers each.")
+    assessments = [line for c in investigations for line in ((_ok(c) or {}).get("reply", "")).splitlines()
+                   if line.strip().startswith("{")]
+    plannings = [c for c in sends if c.input.get("agent") == "schedule-planner"]
+    if not plannings:
+        chunks = [assessments[i::planners] for i in range(planners)]
+        return use_tools(*[tool("send_to_agent", agent="schedule-planner",
+                                message="Assign a kit warehouse and an engineer slot to each assessed unit using "
+                                        "campaign/resources.json (the region's warehouse first; the earliest free slot "
+                                        "on or before remedy_by; one slot per unit). Reply with one JSON line per unit."
+                                        "\n<assessments>\n" + "\n".join(chunk) + "\n</assessments>")
+                           for chunk in chunks if chunk],
+                         preface="Planning in parallel." if planners > 1 else "Handing the assessments to the planner.")
+    records = req.calls("record_plan")
+    first_round = plannings[:planners]
+    plans = [p for c in first_round for p in _json_lines((_ok(c) or {}).get("reply", ""))]
+    if not records:
         return use_tools(tool("record_plan", plans=plans), preface="Recording the plan in Kestrel's system of record.")
-    recorded = _ok(req.calls("record_plan")[-1]) or {}
-    qa = (_ok(to_self[-1]) or {}).get("reply", "")
-    return say(f"Campaign plan recorded: {recorded.get('recorded', 0)} units ({recorded.get('scheduled', 0)} scheduled). {qa}",
+    rejected = (_ok(records[0]) or {}).get("rejected") or []
+    if rejected:
+        rejected_serials = {r["serial"] for r in rejected}
+        if len(resource_calls) < 2:
+            return use_tools(tool("get_resources"), preface=f"{len(rejected)} booking(s) were rejected as conflicts: "
+                                                            "refreshing the stock and calendars.")
+        if writes.count("campaign/resources.json") < 2:
+            return use_tools(tool("write", path="campaign/resources.json", content=resource_calls[-1].result or "{}"),
+                             preface="Updating the shared snapshot.")
+        if len(plannings) == len(first_round):
+            thread_id = (_ok(first_round[0]) or {}).get("thread_id")
+            redo = [a for a in assessments if json.loads(a).get("serial") in rejected_serials]
+            return use_tools(tool("send_to_agent", agent="schedule-planner", thread_id=thread_id,
+                                  message="Some of your bookings conflicted with another planner's. Re-plan these units "
+                                          "from the refreshed campaign/resources.json.\n<assessments>\n" + "\n".join(redo)
+                                          + "\n</assessments>"),
+                             preface="Asking the first planner to re-plan the rejected units in its existing thread.")
+        if len(records) < 2:
+            replans = _json_lines((_ok(plannings[-1]) or {}).get("reply", ""))
+            return use_tools(tool("record_plan", plans=replans), preface="Recording the re-planned units.")
+    final = {p["serial"]: p for p in plans}
+    if rejected and len(plannings) > len(first_round):
+        for p in _json_lines((_ok(plannings[-1]) or {}).get("reply", "")):
+            final[p["serial"]] = p
+    committed = [c for c in records if _ok(c)]
+    scheduled = sum((_ok(c) or {}).get("scheduled", 0) for c in committed)
+    qa_calls = [c for c in sends if c.input.get("agent") == name]
+    if not qa_calls:
+        return use_tools(tool("send_to_agent", agent=name, message="QA: verify these unit plans against the campaign rules."
+                              "\n<plans>\n" + "\n".join(json.dumps(p) for p in final.values()) + "\n</plans>"),
+                         preface="Asking a copy of myself for an independent check.")
+    qa = (_ok(qa_calls[-1]) or {}).get("reply", "")
+    kits: dict[str, int] = {}
+    for p in final.values():
+        if p.get("warehouse"):
+            kits[p["warehouse"]] = kits.get(p["warehouse"], 0) + 1
+    return say(f"Campaign RC-2026-03: {len(final)} unit plans, {scheduled} committed as scheduled"
+               + (f" ({len(rejected)} conflicting booking(s) re-planned after a refresh)" if rejected else "")
+               + ". Kits by warehouse: " + ", ".join(f"{w} {n}" for w, n in sorted(kits.items())) + f". {qa}",
                complexity=0.4)

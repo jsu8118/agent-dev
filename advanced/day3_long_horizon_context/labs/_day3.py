@@ -32,6 +32,7 @@ from labkit.pricing import _get, cost_usd
 DAY_DIR = Path(__file__).resolve().parents[1]
 TODAY = "2026-09-15"
 DATA_END = "2026-09-14"            # last full day of telemetry
+LOG_DAYS = 7                       # the historian export covers the past week
 TECHNICIAN = "T. Brooks"           # the field technician in the maintenance history (WO-24490)
 MARKER = "<adv_day3_field_agent>"
 
@@ -216,9 +217,9 @@ SCRIPT: list[Step] = [
     Step(36, "westfield", "lookup", "Which KC-1 faults are safety faults, and what is the reset rule for them?"),
     Step(37, "westfield", "lookup", "Regreasing the KP-250 circulation pumps while I'm here: what interval in "
                                     "operating hours, and how much grease per bearing?"),
-    Step(38, "westfield", "log", "Log it: Westfield KC-1 (plant room B2) commissioned with P01 set from the motor "
-                                 "nameplate and P10 at 4.0 bar, both KP-250 circulation pumps regreased with 15 g "
-                                 "LUB-EP2 per bearing, no open issues, parts used LUB-EP2 x1."),
+    Step(38, "westfield", "log", "Log it: KC1-WF-B2-A, new KC-1 commissioned with P01 set from the motor nameplate "
+                                 "and P10 at 4.0 bar, both KP-250 circulation pumps regreased with 15 g LUB-EP2 per "
+                                 "bearing, action: none open, parts used LUB-EP2 x1."),
     Step(39, "westfield", "report", "End of the day. Give me the day's report: for each site, what we did, the open "
                                     "items, and the parts to order."),
     Step(40, "westfield", "recall", "And list everything I asked you to remember for next time, site by site."),
@@ -433,7 +434,7 @@ LOG_NOTES = {
 
 @lru_cache(maxsize=None)
 def site_log(site_id: str) -> str:
-    """The export the technician asks for on arrival: a historian export (monitored sites, five days of hourly
+    """The export the technician asks for on arrival: a historian export (monitored sites, seven days of hourly
     readings for every unit) or a KC-1 diagnostic-log export (the other sites). Big on purpose - it is the
     bulk that makes a day-long context grow."""
     if site_id not in SITE_BY_ID:
@@ -441,7 +442,7 @@ def site_log(site_id: str) -> str:
     s = SITE_BY_ID[site_id]
     if s.monitored:
         ids = [u.unit_id for u in s.units]
-        start = (dt.date.fromisoformat(DATA_END) - dt.timedelta(days=4)).isoformat()
+        start = (dt.date.fromisoformat(DATA_END) - dt.timedelta(days=LOG_DAYS - 1)).isoformat()
         lines = [f"# historian export | {s.plant} | {start} .. {DATA_END} | hourly averages | {', '.join(ids)}",
                  "NOTES:"] + [f"  {n}" for n in LOG_NOTES[site_id]] + ["READINGS:"]
         for r in telemetry():
@@ -504,7 +505,7 @@ FIELD_TOOLS: list[dict] = [
      "service, open work orders or tickets, hazardous-area rules. Call it on arrival at a site.",
      "input_schema": {"type": "object", "properties": {"site_id": {"type": "string", "description": "gbwd | harbor | "
                       "riverbend | cedar | cobalt | westfield"}}, "required": ["site_id"]}},
-    {"name": "get_site_log", "description": "The site's log export: a five-day historian export for monitored sites "
+    {"name": "get_site_log", "description": "The site's log export: a seven-day historian export for monitored sites "
      "(hourly readings per pump plus operator notes) or the KC-1 diagnostic-log export for the others. Large.",
      "input_schema": {"type": "object", "properties": {"site_id": {"type": "string"}}, "required": ["site_id"]}},
     {"name": "read_manual_section", "description": "One section of a Kestrel document. Documents: IOM-KP250 (KP-250 "
@@ -653,12 +654,15 @@ def text_of(response: Any) -> str:
 def run_turn(create: Callable[..., Any], *, params: dict, messages: list[dict], text: str,
              execute: Callable[[str, dict], tuple[str, bool]], number: int = 0, site: str = "",
              after_user: list[dict] | None = None, before_request: Callable[[list[dict]], None] | None = None,
+             after_results: Callable[[list[dict]], None] | None = None,
              on_response: Callable[[Any], None] | None = None, max_rounds: int = 6) -> TurnStats:
     """One technician message, answered - a minimal, correct tool loop.
 
     * appends the FULL `response.content` (thinking, progress and compaction blocks must survive verbatim);
     * answers every tool_use of a round in ONE user message, tool_result blocks first;
-    * `after_user` messages (per-turn reminders, effort changes) go right after the technician's message;
+    * `after_user` messages (per-turn reminders) go right after the technician's message, and
+      `after_results(messages)` may append more after each tool_result message (a reminder that must stay in
+      view for the whole turn is re-sent after every round - lab 04);
     * `before_request(messages)` may rewrite history in place (truncation, summarisation - the labs measure what
       that costs); never runs a tool call from a response that stopped on max_tokens.
     """
@@ -694,6 +698,8 @@ def run_turn(create: Callable[..., Any], *, params: dict, messages: list[dict], 
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": content,
                             **({"is_error": True} if is_error else {})})
         messages.append({"role": "user", "content": results})
+        if after_results:
+            after_results(messages)
     stats.notes.append("max_rounds reached")
     return stats
 
@@ -769,3 +775,94 @@ def as_body(messages: list[dict], **params: Any) -> dict:
 def approx_tokens(text: str) -> int:
     """A planning estimate (~3.8 characters per token, the mock's own rate); count_tokens for anything that matters."""
     return max(1, round(len(text) / 3.8))
+
+
+# =============================================================================================== the day as a loop
+@dataclass
+class DayRun:
+    """Everything one run of the day produced: per-turn accounting, the final history, the findings log, and the
+    harness's own side calls (summaries, extractions) which are billed too."""
+    turns: list[TurnStats]
+    messages: list[dict]
+    findings: FindingsLog
+    side_calls: list[tuple[str, Any]] = field(default_factory=list)     # (label, response)
+
+    @property
+    def side_cost(self) -> float:
+        return sum(response_cost(r) for _, r in self.side_calls)
+
+    @property
+    def cost(self) -> float:
+        return sum(t.cost for t in self.turns) + self.side_cost
+
+    @property
+    def peak_context(self) -> int:
+        return max((t.prompt for t in self.turns), default=0)
+
+    @property
+    def output_tokens(self) -> int:
+        return sum(t.output for t in self.turns) + sum(usage_parts(r.usage)["output"] for _, r in self.side_calls)
+
+    @property
+    def truncated(self) -> list[TurnStats]:
+        return [t for t in self.turns if t.stop_reason == "max_tokens"]
+
+    def turn(self, number: int) -> TurnStats:
+        return next(t for t in self.turns if t.number == number)
+
+
+def run_day(create: Callable[..., Any], params: dict, *, steps: list[Step] | None = None,
+            messages: list[dict] | None = None, execute: Callable[[str, dict], tuple[str, bool]] | None = None,
+            before_turn: Callable[[Step, list[dict]], None] | None = None,
+            after_user: Callable[[Step], list[dict]] | None = None,
+            before_request: Callable[[list[dict]], None] | None = None,
+            after_results: Callable[[list[dict]], None] | None = None,
+            after_turn: Callable[[Step, TurnStats, list[dict]], None] | None = None,
+            on_turn: Callable[[Step, TurnStats], None] | None = None) -> DayRun:
+    """Replay the technician's day (or a slice of it) through `run_turn`, with the hooks a harness would use:
+    `before_turn` (effort changes, history resets at site boundaries), `after_user` (reminders), `before_request`
+    (client-side truncation), `after_results` (per-round reminders), `after_turn` (summaries, state extraction)."""
+    messages = [] if messages is None else messages
+    execute = execute or make_executor()
+    turns: list[TurnStats] = []
+    for s in steps or SCRIPT:
+        if before_turn:
+            before_turn(s, messages)
+        stats = run_turn(create, params=params, messages=messages, text=s.text, execute=execute, number=s.number,
+                         site=s.site, after_user=after_user(s) if after_user else None,
+                         before_request=before_request, after_results=after_results)
+        turns.append(stats)
+        if on_turn:
+            on_turn(s, stats)
+        if after_turn:
+            after_turn(s, stats, messages)
+    return DayRun(turns=turns, messages=messages, findings=execute.findings)       # type: ignore[attr-defined]
+
+
+def ask_probes(create: Callable[..., Any], params: dict, messages: list[dict], *, probes: list[Probe] | None = None,
+               prepare: Callable[[list[dict]], list[dict]] | None = None) -> list[tuple[Probe, str, bool]]:
+    """Ask each probe question in a fork of the conversation (the day's history is not changed), and grade the
+    answer against the fact that was said during the day. `prepare(fork)` applies the strategy's own view of the
+    history (e.g. the truncation window) before the probe is sent."""
+    out = []
+    for probe in probes or PROBES:
+        fork = list(messages)
+        if prepare:
+            fork = prepare(fork)
+        stats = run_turn(create, params=params, messages=fork, text=probe.question, execute=make_executor())
+        out.append((probe, stats.reply, probe_passed(probe, stats.reply)))
+    return out
+
+
+def tool_result_tokens(messages: list[dict]) -> int:
+    """Estimated tokens of every tool result in a history (what a task budget counts besides the output)."""
+    total = 0
+    for m in messages:
+        if m.get("role") != "user" or not isinstance(m.get("content"), list):
+            continue
+        for b in m["content"]:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                content = b.get("content")
+                text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                total += approx_tokens(text)
+    return total

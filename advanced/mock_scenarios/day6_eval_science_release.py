@@ -7,10 +7,14 @@ mock mode are honest measurements OF THE HEURISTIC. They illustrate the method; 
 well Claude judges or triages. Each lab prints a `[mock]` note where that matters.
 
 Scenarios (matched on marker tags the labs put in their system prompts):
-    adv.day6.pairwise_judge   <adv_day6_pairwise_judge rubric="v1|v2">   A-vs-B judge over two replies (lab 03)
-    adv.day6.pointwise_judge  <adv_day6_pointwise_judge>                 1-5 score for one reply (labs 02, 06)
+    adv.day6.pairwise_judge   <adv_day6_pairwise_judge rubric="v1|v2">   A-vs-B judge over two replies (lab 03); when
+                                                                         the request's schema offers no "tie", equal
+                                                                         replies are resolved by position
+    adv.day6.pointwise_judge  <adv_day6_pointwise_judge>                 1-5 score for one reply (lab 02)
     adv.day6.triage           <adv_day6_triage>                          ticket triage that OBEYS the prompt's
                                                                          <rules> block literally (labs 05, 06)
+    adv.day6.migration_probe  <adv_day6_migration_probe>                 a two-turn order lookup used to probe
+                                                                         request shapes and thinking binding (lab 07)
 """
 
 from __future__ import annotations
@@ -18,12 +22,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from labkit.mock import MockRequest, Reply, json_reply, scenario
+from labkit.mock import MockRequest, Reply, json_reply, say, scenario, tool, use_tools
 from labkit.mock.schema_tools import resolve, synthesize
 
 PAIRWISE_MARK = "<adv_day6_pairwise_judge"
 POINTWISE_MARK = "<adv_day6_pointwise_judge"
 TRIAGE_MARK = "<adv_day6_triage"
+PROBE_MARK = "<adv_day6_migration_probe"
 
 CATEGORY_NAMES = ("order_status", "shipping_delay", "return_request", "warranty_claim", "billing",
                   "technical_support", "product_inquiry", "safety_incident", "account_access", "other")
@@ -102,6 +107,15 @@ def _context(text: str) -> tuple[str, str, bool]:
     return category, order_id, requires_human
 
 
+def _winner_options(schema: dict | None) -> list:
+    """The values the request's output schema allows for `winner` (empty when there is no schema or no enum)."""
+    if not schema:
+        return []
+    root = schema
+    props = resolve(schema, root).get("properties") or {}
+    return list(resolve(props.get("winner") or {}, root).get("enum") or [])
+
+
 @scenario("adv.day6.pairwise_judge", match=lambda r: PAIRWISE_MARK in r.system_text, priority=10)
 def pairwise_judge(req: MockRequest) -> Reply:
     text = req.last_user_text
@@ -109,6 +123,16 @@ def pairwise_judge(req: MockRequest) -> Reply:
     a, fa = judge_reply(_section(text, "reply_a"), category, order_id, requires_human)
     b, fb = judge_reply(_section(text, "reply_b"), category, order_id, requires_human)
     rubric = _attr(req.system_text, "adv_day6_pairwise_judge", "rubric") or "v1"
+    options = _winner_options(req.output_schema)
+    if options and "tie" not in options:
+        # Forced choice: the schema offers no "tie". When the heuristic finds the replies equal it must still name
+        # one, and it names the one presented FIRST - the extreme form of the primacy bias LLM judges show on close
+        # pairs. The swap test in lab 03 is what exposes it.
+        winner = "A" if a >= b else "B"
+        rationale = (f"[heuristic judge {rubric}, forced choice] A scores {a} ({'; '.join(fa) or 'no findings'}); "
+                     f"B scores {b} ({'; '.join(fb) or 'no findings'})"
+                     + ("; equal - picked the first reply presented." if a == b else "."))
+        return json_reply(_fit({"rationale": rationale, "winner": winner}, req.output_schema, text), complexity=0.3)
     if rubric == "v2":
         # Rubric v2 ("empathy and brevity"): an apology is no longer a finding, and two replies that score the
         # same are separated by length, shorter first. Same replies, different verdicts - the drift that the
@@ -211,3 +235,18 @@ def triage(req: MockRequest) -> Reply:
     body = _section(text, "email") or text
     verdict = triage_email(subject, body, parse_rules(req.system_text))
     return json_reply(_fit(verdict, req.output_schema, text), complexity=0.15)
+
+
+# =========================================================================================== migration probe
+# A deliberately small two-turn agent: look the order up, then answer from the tool result. Lab 07 sends the same
+# conversation to different models (a migration, then a rollback) to see what the API does with the request shape
+# and with thinking blocks produced by another model; the policy itself only has to behave like a normal agent.
+@scenario("adv.day6.migration_probe", match=lambda r: PROBE_MARK in r.system_text, priority=10)
+def migration_probe(req: MockRequest) -> Reply:
+    asked = sorted(set(re.findall(r"\bSO-\d{5}\b", req.first_user_text)))
+    order_id = asked[0] if asked else "SO-10312"
+    if not req.called("get_order"):
+        return use_tools(tool("get_order", order_id=order_id), preface=None)
+    result = req.calls("get_order")[-1].result_json() or {}
+    status = result.get("status", "in transit")
+    return say(f"Order {order_id} is {status}. [probe answer from the tool result, model {req.model}]")

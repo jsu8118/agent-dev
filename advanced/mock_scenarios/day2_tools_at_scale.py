@@ -1,25 +1,35 @@
 """Mock policies for Day 2 - Tool engineering at scale.
 
-Six rule-based stand-ins for Claude, each matched by a marker in the lab's system prompt:
+Rule-based stand-ins for Claude, each matched by a marker in the lab's system prompt:
 
-  adv.day2.tool_search  <adv_day2_tool_search>  lab 02: writes a search query from the request, reports what it found
-  adv.day2.wide_agent   <adv_day2_wide_agent>   lab 03: plans one tool per clause of the request, searches the deferred
-                                                catalog when the best tool is not loaded, escalates what no tool covers
-  adv.day2.phases       <adv_day2_phases>       lab 04: the same planner, restricted to the tools loaded right now
-  adv.day2.ptc          <adv_day2_ptc>          lab 05: telemetry triage as N direct calls, or as one code cell
-  adv.day2.stream       <adv_day2_stream>       lab 06: drafts a long bulletin body into a tool input
-  adv.day2.selection    <adv_day2_selection>    lab 07 (and lab 01): picks exactly one loaded tool for a request
+  adv.day2.tool_search  <adv_day2_tool_search>  lab 02: writes one tool-search query from the request and reports what
+                                                the search returned (it does not call the tool)
+  adv.day2.wide_agent   <adv_day2_wide_agent>   labs 03 and 07: plans one tool per clause of the request from the tools
+                                                it can see; searches the deferred catalog when none of them covers a
+                                                clause; escalates what nothing covers
+  adv.day2.phases       <adv_day2_phases>       lab 04: the same planner without escalation (the application, not the
+                                                model, decides which tools exist in each phase)
+  adv.day2.selection    <adv_day2_selection>    labs 01 and 07: picks exactly one visible tool for the whole request
+  adv.day2.ptc          <adv_day2_ptc>          lab 05: recall triage as direct tool calls (parallel, or one per turn
+                                                when parallel calls are disabled) or as a code cell calling the tools
+  adv.day2.stream       <adv_day2_stream>       lab 06: drafts a long bulletin into a client tool's input
 
 How the stand-in "chooses" - every decision is lexical and derived from the request, never from a lookup table:
-  * the user's words are tokenised and stemmed; each tool's name, description, argument names and argument
-    descriptions form its document; a BM25 ranking picks the best fit for each clause of the request. Questions
-    down-weight write tools, descriptions that start with DEPRECATED are down-weighted, nothing else is special;
-  * a search query is the same vocabulary: the rarest content words as a regex alternation for the regex variant,
-    all content words for the BM25 variant;
-  * arguments are filled from identifiers in the conversation (their formats are learned from the argument
-    descriptions, e.g. "SO-10248"), from earlier tool results and from the argument's own description.
-Live Claude reads the same descriptions and reasons about them; the stand-in only measures their vocabulary,
-which is exactly what makes the description A/B of lab 07 move. Everything is deterministic.
+  * the request is split into clauses; each clause's content words are stemmed; each tool's name, description,
+    argument names, argument descriptions and enums form its document;
+  * a visible tool COVERS a clause when it shares at least a third of the clause's content words; the covering tool
+    with the best BM25 score wins (questions down-weight write tools; descriptions that start with DEPRECATED are
+    down-weighted). The stand-in only ranks tools the model can see (non-deferred, discovered, added) - it never
+    peeks at deferred definitions; when nothing visible covers a clause and a tool search tool is declared, it
+    searches with the clause's words (rarest words as a regex alternation, all words as a BM25 query);
+  * arguments come from identifiers in the request (their formats are read from the argument descriptions, e.g.
+    "e.g. SO-10248"), from earlier tool results and from the arguments' own descriptions; optional arguments are only
+    filled when the request states them.
+Live Claude reads the same descriptions and reasons about them; the stand-in only measures their vocabulary, which is
+exactly what makes the description A/B of lab 07 move. Everything is deterministic.
+
+One search per response: after a search the stand-in acts on what it found (tool calls or an answer) and searches again
+on a later turn if a clause is still uncovered.
 """
 
 from __future__ import annotations
@@ -40,7 +50,7 @@ MARK_STREAM = "<adv_day2_stream>"
 MARK_SELECT = "<adv_day2_selection>"
 
 TODAY = "2026-09-15"
-NEXT_WEEK = ("2026-09-21", "2026-09-25")
+COVER_MIN = 0.34            # share of a clause's content words a tool's document must contain to cover it
 
 STOP = frozenset("""a an the and or of to for in on at by with from into about as is are was were be been being it its this that
 these those i you we they he she them our your their my me us do does did done have has had having can could should would will
@@ -49,27 +59,38 @@ asks asked say says said customer customers someone anyone here there now today 
 since until before after also just still again right up out off over under one two three four five first second new old any all
 some no not nothing hasn haven hadn isn aren wasn doesn didn don won cannot what which who whom whose when where why how much
 many more most very really thanks thank hi hello ok okay yes got go going come came back friday monday tuesday wednesday thursday
-saturday sunday per each every via like onto put they them their us then that this it if so ours mine yours whether about
-right currently""".split())
+saturday sunday per each every via like onto put then if so ours mine yours whether currently get gets pull pulled because
+still keep keeps kept""".split())
 WRITE_VERBS = frozenset("create book open apply cancel send post update issue record reserve transfer schedule waive register close "
-                        "reopen release hold assign acknowledge set link notify escalate request generate log add file reroute".split())
+                        "reopen release hold assign acknowledge set link notify escalate request generate log add file reroute draft".split())
 ACTION_WORDS = frozenset("create book open apply cancel send post update issue record reserve transfer schedule waive register close "
                          "reopen release hold assign acknowledge set link notify escalate request generate log add file reroute move "
-                         "put change place drop knock refund reduce credit pay send block register acknowledge order".split())
+                         "put change place drop knock refund reduce credit pay block draft decode list find pull".split())
 SAFETY_WORDS = ("leak", "fire", "smell", "injur", "spill", "safety", "unattended", "emergency", "smoke", "wet seal", "solvent")
 
-SERIAL = re.compile(r"\b[A-Z]{2,3}\d{2,4}-\d{4}-\d{4}\b")
+SERIAL = re.compile(r"\b[A-Z]{2,3}\d{1,4}-\d{4}-\d{4}\b")
 TRACKING = re.compile(r"\b[A-Z]{3}\d{10}\b")
 LOT = re.compile(r"\b[A-Z]{2}-\d{4}-[A-Z]\b")
 FAULT = re.compile(r"\b[FE]\d{2}\b")
 SKU = re.compile(r"\b(?:KP-\d{3}(?:-[A-Z])?|MS-\d{3}(?:-R)?|KC-\d(?:-[A-Z]{3})?)\b")
+FAMILY = re.compile(r"\b(?:KC-[12]|KP-\d{3})\b(?!-)")
 WAREHOUSE = re.compile(r"\bWH-(?:EAST|WEST|EU)\b")
 REGION = re.compile(r"\b(?:US-EAST|US-WEST|EU|APAC)\b")
 DATE = re.compile(r"\b20\d\d-\d\d-\d\d\b")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 AMOUNT = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s?%")
-EG_PREFIX = re.compile(r"e\.g\.\s*([A-Z]{1,5}-)(?=[0-9A-Z])")
+EG_PREFIX = re.compile(r"e\.g\.\s*(?:seal lot |board lot )?([A-Z]{1,5}-)(?=[0-9A-Z])")
+ANY_ID = re.compile(r"\b[A-Z]{1,5}-[0-9A-Z][0-9A-Z-]*\b|\b[A-Z]{3}\d{10}\b|\b[A-Z]{2,3}\d{1,4}-\d{4}-\d{4}\b")
+PROPER_NAME = re.compile(r"(?<![.?!]\s)(?<!^)\b[A-Z][a-z]+(?:\s+(?:&\s+)?[A-Z][a-z]+)+")
+FORMATS = {                 # argument name -> the identifier format a model recognises for it
+    "serial_number": SERIAL, "tracking_number": TRACKING, "lot": LOT, "fault_code": FAULT, "sku": SKU, "family": FAMILY,
+    "warehouse": WAREHOUSE, "from_warehouse": WAREHOUSE, "to_warehouse": WAREHOUSE, "region": REGION,
+    "engineer_id": re.compile(r"\bFSE-\d{2}\b"), "bulletin_id": re.compile(r"\bTSB-\d{4}-\d{2}\b"),
+    "location": re.compile(r"\b(?:SITE-\d{4}-[A-Z]|WH-(?:EAST|WEST|EU))\b"), "hold_id": re.compile(r"\bQH-\d{4}-\d{3}\b"),
+}
+FREE_TEXT = ("summary", "justification", "action", "description", "resolution", "note", "reason", "text", "body", "title",
+             "subject", "query", "address", "value", "reference", "options", "name", "topic", "section")
 
 
 # ------------------------------------------------------------------------------------------ text helpers
@@ -92,9 +113,10 @@ def _raw_tokens(text: str) -> list[str]:
 
 
 def content_words(text: str) -> list[str]:
-    """The words a model would search for: no stopwords, no bare numbers, no identifiers, deduplicated, in order."""
+    """The words a model would search for: no stopwords, no bare numbers, no identifiers, no multi-word names
+    ("Lumen Data Centers"), deduplicated, in order."""
     out: list[str] = []
-    for w in _raw_tokens(re.sub(r"\b[A-Z]{1,5}-[0-9A-Z-]+\b|\b[A-Z]{3}\d{10}\b|\b[A-Z]{2,3}\d{2,4}-\d{4}-\d{4}\b", " ", text)):
+    for w in _raw_tokens(PROPER_NAME.sub(" ", ANY_ID.sub(" ", text))):
         if w in STOP or len(w) < 3 or w.isdigit() or w in out:
             continue
         out.append(w)
@@ -112,11 +134,11 @@ def _doc(t: dict) -> list[str]:
         if isinstance(schema, dict):
             parts.append(str(schema.get("description", "")))
             if isinstance(schema.get("enum"), list):
-                parts.append(" ".join(map(str, schema["enum"])))
+                parts.append(" ".join(map(str, schema["enum"])).replace("_", " "))
     return [_stem(w) for w in _raw_tokens(" ".join(parts))]
 
 
-def id_words(text: str, tools: list[dict]) -> list[str]:
+def id_words(text: str, tools: list[dict], *, for_search: bool = False) -> list[str]:
     """Words a model infers from identifiers: 'SO-10248' means 'order' because an argument named order_id gives SO- as its
     example - so the mapping comes from the tool definitions in the request, not from a table in this file."""
     prefixes: dict[str, list[str]] = {}
@@ -128,83 +150,108 @@ def id_words(text: str, tools: list[dict]) -> list[str]:
     for prefix, base in prefixes.items():
         if re.search(rf"\b{re.escape(prefix)}[0-9A-Z]", text):
             words += base
-    if SERIAL.search(text):
-        words += ["serial", "number", "unit"]
-    if TRACKING.search(text):
-        words += ["tracking", "number"]
-    if LOT.search(text):
-        words.append("lot")
-    if FAULT.search(text):
-        words += ["fault", "code"]
-    if SKU.search(text):
-        words.append("sku")
-    if WAREHOUSE.search(text):
-        words.append("warehouse")
-    if REGION.search(text):
-        words.append("region")
+    implied_by = [(TRACKING, ["tracking", "number"]), (LOT, ["lot"]), (FAULT, ["fault", "code"])]
+    if not for_search:              # generic argument words help ranking visible tools, not a catalog search
+        implied_by += [(SERIAL, ["serial", "number", "unit"]), (SKU, ["sku"]), (WAREHOUSE, ["warehouse"]), (REGION, ["region"])]
+    for pattern, implied in implied_by:
+        if pattern.search(text):
+            words += implied
     return list(dict.fromkeys(words))
 
 
 # ------------------------------------------------------------------------------------------ ranking
 def custom_tools(req: MockRequest) -> list[dict]:
-    """Client tools in the request (deferred ones included), inline definitions added mid-conversation too."""
+    """Client tools the API knows about (deferred ones included) plus definitions added inline mid-conversation."""
     out = [t for t in req.tools if t.get("type") in (None, "custom") and t.get("name")]
-    out += [d for d in req.inline_tool_definitions.values() if d.get("name") not in {t["name"] for t in out}]
+    names = {t["name"] for t in out}
+    out += [d for d in req.inline_tool_definitions.values() if d.get("name") not in names]
     return out
 
 
-def rank(query: list[str], tools: list[dict], *, question: bool = False) -> list[tuple[float, str, list[str]]]:
+def visible_tools(req: MockRequest) -> list[dict]:
+    """What the model can see: non-deferred tools, tools discovered by search or added, minus removed ones."""
+    loaded = req.loaded_tool_names
+    return [t for t in custom_tools(req) if t["name"] in loaded]
+
+
+def rank(query: list[str], tools: list[dict], *, question: bool = False) -> list[tuple[float, str, float]]:
+    """BM25 over the tools' documents -> [(score, name, coverage)], best first. Coverage = share of the query's
+    content terms (the first `len(query)` terms that are not id-derived) the tool's document contains."""
     docs = [(t["name"], _doc(t), t.get("description", "")) for t in tools]
     n = len(docs) or 1
     avg = (sum(len(d) for _, d, _ in docs) / n) or 1.0
     df = {term: sum(1 for _, d, _ in docs if term in d) for term in set(query)}
     scored = []
     for name, doc, desc in docs:
-        score, matched = 0.0, []
+        score = 0.0
         for term in query:
             tf = doc.count(term)
             if not tf:
                 continue
             idf = math.log(1 + (n - df[term] + 0.5) / (df[term] + 0.5))
             score += idf * tf * 2.2 / (tf + 1.2 * (0.25 + 0.75 * len(doc) / avg))
-            matched.append(term)
         if score <= 0:
             continue
         if question and name.split("_")[0] in WRITE_VERBS:
             score *= 0.5
         if re.match(r"\s*\[?deprecated", desc, re.I):
             score *= 0.2
-        scored.append((score, name, matched))
+        scored.append((score, name, 0.0))
     return sorted(scored, key=lambda x: (-x[0], x[1]))
 
 
+def coverage(terms: list[str], t: dict) -> float:
+    if not terms:
+        return 0.0
+    doc = set(_doc(t))
+    return sum(1 for term in terms if term in doc) / len(terms)
+
+
 def clauses_of(text: str) -> list[str]:
-    parts = re.split(r"(?<=[.?!;])\s+|\s*;\s*|\s+-\s+|,\s+and\s+(?=[a-z])|\s+then\s+|\n+", text.strip())
+    parts = re.split(r"(?<=[.?!;])\s+|\s*;\s*|\s+-\s+|,\s+and\s+(?=[a-z])|,?\s+then\s+|\n+", text.strip())
     return [p.strip(" ,.;:") for p in parts if len(content_words(p)) >= 1]
 
 
 def is_question(clause: str) -> bool:
-    words = set(_raw_tokens(clause))
-    return not (words & ACTION_WORDS)
+    """A clause without an action verb asks for information: write tools rank lower for it."""
+    return not (set(_raw_tokens(clause)) & ACTION_WORDS)
 
 
-def search_query(clause: str, tools: list[dict], variant: str) -> str:
-    words = content_words(clause) + [w for w in id_words(clause, tools) if w not in content_words(clause)]
+def is_statement(clause: str) -> bool:
+    """Context ('The customer says the carrier has not scanned it'): may prompt a search, never an escalation."""
+    words = _raw_tokens(clause)
+    asks = clause.rstrip().endswith("?") or (words and words[0] in ("what", "which", "who", "where", "when", "why", "how",
+                                                                     "is", "are", "does", "do", "can", "could", "tell"))
+    return not asks and not (set(words) & ACTION_WORDS)
+
+
+def search_query(clauses: list[str], tools: list[dict], variant: str) -> str:
+    """A query in the model's words: the rarest content words (regex alternation) or all of them (BM25)."""
+    words: list[str] = []
+    for clause in clauses:
+        for w in content_words(clause) + id_words(clause, tools, for_search=True):
+            if w not in words:
+                words.append(w)
     if variant == "regex":
         docs = [_doc(t) for t in tools]
-        n = len(docs) or 1
-        # the rarest three words across the catalog make the most specific pattern (a model knows its vocabulary)
         rarity = {w: sum(1 for d in docs if _stem(w) in d) for w in words}
-        chosen = sorted(words, key=lambda w: (rarity[w] == 0, rarity[w], words.index(w)))[:3]
-        forms = []
-        for w in chosen:
-            f = w[:-3] if w.endswith("ing") and len(w) > 6 else w[:-1] if w.endswith("s") and len(w) > 4 else w
-            forms.append(re.escape(f))
-        return "|".join(forms)
+        per_clause = max(1, 3 // max(1, len(clauses)))
+        chosen: list[str] = []
+        for clause in clauses:
+            mine = [w for w in content_words(clause) if w in rarity]
+            mine.sort(key=lambda w: (rarity[w] == 0, rarity[w], mine.index(w)))
+            chosen += [w for w in mine[:per_clause] if w not in chosen]
+        return "|".join(re.escape(_stem(w)) for w in chosen[:4]) or "tool"
     return " ".join(words)
 
 
 # ------------------------------------------------------------------------------------------ conversation views
+def _blocks(content: Any) -> list[dict]:
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    return [b for b in content or [] if isinstance(b, dict)]
+
+
 def segment(req: MockRequest) -> tuple[str, int]:
     """The latest user question (a user message with text and no tool results) and its index."""
     msgs = req.messages
@@ -212,8 +259,7 @@ def segment(req: MockRequest) -> tuple[str, int]:
         m = msgs[i]
         if m.get("role") != "user":
             continue
-        content = m.get("content")
-        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else [b for b in content or [] if isinstance(b, dict)]
+        blocks = _blocks(m.get("content"))
         if any(b.get("type") == "tool_result" for b in blocks):
             continue
         text = "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
@@ -223,23 +269,31 @@ def segment(req: MockRequest) -> tuple[str, int]:
 
 
 def since(req: MockRequest, q_idx: int) -> tuple[list[ToolCall], list[dict], list[dict]]:
-    """Tool calls, searches (inputs) and search results made since the latest question."""
-    calls, searches, results = [], [], []
-    ids = set()
+    """Tool calls, searches (their inputs) and search results made since the latest question."""
+    searches, results, ids = [], [], set()
     for m in req.messages[q_idx + 1:]:
         if m.get("role") != "assistant":
             continue
-        for b in m.get("content") or []:
-            if not isinstance(b, dict):
-                continue
+        for b in _blocks(m.get("content")):
             if b.get("type") == "tool_use":
                 ids.add(b.get("id"))
             elif b.get("type") == "server_tool_use" and str(b.get("name", "")).startswith("tool_search"):
                 searches.append(b.get("input") or {})
             elif b.get("type") == "tool_search_tool_result":
                 results.append(b.get("content") or {})
-    calls = [c for c in req.tool_calls if c.id in ids]
-    return calls, searches, results
+    return [c for c in req.tool_calls if c.id in ids], searches, results
+
+
+def query_of(search_input: dict) -> str:
+    return str(search_input.get("query") or search_input.get("pattern") or "")
+
+
+def ends_with_search(req: MockRequest) -> bool:
+    """True inside a response that has just run a tool search (the API asks the model to continue)."""
+    if not req.messages or req.messages[-1].get("role") != "assistant":
+        return False
+    blocks = _blocks(req.messages[-1].get("content"))
+    return bool(blocks) and blocks[-1].get("type") == "tool_search_tool_result"
 
 
 def _walk(value: Any, key: str, depth: int = 0) -> Any:
@@ -260,298 +314,322 @@ def _walk(value: Any, key: str, depth: int = 0) -> Any:
     return None
 
 
-def from_results(req: MockRequest, key: str) -> Any:
-    for c in reversed(req.tool_calls):
+def from_results(req: MockRequest, key: str, *, calls: list[ToolCall] | None = None) -> Any:
+    for c in reversed(calls if calls is not None else req.tool_calls):
         if c.is_error or c.result is None:
             continue
-        data = c.result_json()
-        found = _walk(data, key)
+        found = _walk(c.result_json(), key)
         if found is not None:
             return found
     return None
 
 
 # ------------------------------------------------------------------------------------------ argument filling
-def _enum_from_description(desc: str) -> list[str]:
+def _options(desc: str) -> list[str]:
+    """A closed set described in prose, e.g. 'no_longer_needed, wrong_item, defective, other.' -> the options."""
     body = desc.split(":", 1)[1] if ":" in desc else desc
-    options = re.findall(r"\b([A-Za-z][A-Za-z0-9_]{1,30})\b", body)
-    return [o for o in options if o.lower() not in ("or", "and", "e", "g", "the", "a", "of", "to", "in")]
+    body = re.sub(r"\([^)]*\)|\be\.g\.", "", body)
+    opts = [o.strip(" .") for o in re.split(r",|\bor\b", body)]
+    return [o for o in opts if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{1,30}", o or "")]
 
 
-def fill_args(t: dict, req: MockRequest, text: str, clause: str) -> dict | None:
-    """Fill a tool's arguments from the conversation; None when a required argument is not available (yet)."""
-    schema = t.get("input_schema") or {}
-    props = schema.get("properties") or {}
-    required = schema.get("required") or []
-    convo = text + "\n" + req.conversation_text
-    lower = text.lower()
-    args: dict[str, Any] = {}
+def _mentioned(option: str, text: str) -> bool:
+    words = [w for w in re.split(r"[_\s-]+", option.lower()) if w]
+    stems = {_stem(w) for w in re.findall(r"[a-z0-9]+", text.lower())}
+    return bool(words) and all(_stem(w) in stems for w in words)
 
-    def prefix_regex(desc: str) -> list[re.Pattern]:
-        return [re.compile(rf"\b{re.escape(p)}[0-9A-Z][0-9A-Z-]*\b") for p in EG_PREFIX.findall(desc)]
 
-    for prop, ps in props.items():
-        desc = str((ps or {}).get("description", ""))
-        kind = (ps or {}).get("type", "string")
-        value: Any = None
-        if prop == "serial_number":
-            value = (SERIAL.search(text) or SERIAL.search(convo) or [None])
-            value = value.group(0) if hasattr(value, "group") else from_results(req, "serial_number")
-        elif prop == "tracking_number":
-            m = TRACKING.search(text)
-            value = m.group(0) if m else from_results(req, "tracking_number")
-        elif prop == "lot":
-            m = LOT.search(text)
-            value = m.group(0) if m else from_results(req, "lot") or from_results(req, "seal_lot")
-        elif prop == "fault_code":
-            m = FAULT.search(clause) or FAULT.search(text)
-            value = m.group(0) if m else from_results(req, "code")
-        elif prop in ("sku", "from_warehouse", "to_warehouse", "warehouse", "region"):
-            pat = {"sku": SKU, "warehouse": WAREHOUSE, "from_warehouse": WAREHOUSE, "to_warehouse": WAREHOUSE, "region": REGION}[prop]
-            found = pat.findall(text)
-            if prop == "to_warehouse" and len(found) > 1:
-                value = found[1]
-            elif found:
-                value = found[0]
-            elif prop == "sku":
-                value = from_results(req, "sku")
-        elif prop in ("from_date", "to_date", "date", "since", "due_date"):
-            dates = DATE.findall(text)
-            if prop in ("from_date", "date", "since", "due_date"):
-                value = dates[0] if dates else (NEXT_WEEK[0] if "next week" in lower else None)
-            else:
-                value = dates[1] if len(dates) > 1 else (NEXT_WEEK[1] if "next week" in lower else (dates[0] if dates else None))
-        elif prop == "days":
-            m = re.search(r"(\d{1,3})[- ]day|last (\d{1,3}) days", lower)
-            value = int(m.group(1) or m.group(2)) if m else (7 if "week" in lower else 7)
-        elif prop == "amount_usd":
-            m = AMOUNT.search(clause) or AMOUNT.search(text)
-            if m:
-                value = float(m.group(1).replace(",", ""))
-            elif PERCENT.search(clause):
-                amount = from_results(req, "amount_usd")
-                value = round(float(amount) * float(PERCENT.search(clause).group(1)) / 100, 2) if amount else None
-        elif prop in ("qty", "pieces"):
-            m = re.search(r"\b(\d{1,3})\s*(?:x\s+|units?|pieces?|kits?|of\b|\b)", clause, re.I) or re.search(r"\bx\s*(\d{1,3})\b", clause, re.I)
-            value = int(m.group(1)) if m else (1 if prop == "qty" else None)
-        elif prop == "percent":
-            m = PERCENT.search(clause)
-            value = float(m.group(1)) if m else None
-        elif prop in ("priority",):
-            m = re.search(r"\bP[1-4]\b", text)
-            value = m.group(0) if m else ("P1" if any(w in lower for w in SAFETY_WORDS) else "P3")
-        elif prop == "severity":
-            value = "safety" if any(w in lower for w in SAFETY_WORDS) else "medium"
-        elif prop == "queue":
-            value = infer_queue(clause)
-        elif prop == "approver_role":
-            value = "quality_lead" if "quality" in lower or "lot" in lower else "support_manager"
-        elif prop == "channel":
-            m = re.search(r"\b(logistics|billing|quality|field[- ]service)\b", lower)
-            value = m.group(1).replace(" ", "-") if m else "support"
-        elif prop == "team":
-            m = re.search(r"\b(logistics|billing|quality|field[- ]service|support)\b", lower)
-            value = m.group(1).replace(" ", "-") if m else "support"
-        elif prop in ("skill", "service", "metric", "status", "field", "family", "reason_code", "country", "name", "topic", "section"):
-            options = _enum_from_description(desc)
-            hit = next((o for o in options if re.search(rf"\b{re.escape(o.lower())}\b", lower)), None)
-            if prop == "family" and hit is None:
-                m = re.search(r"\b(KC-[12]|KP-\d{3})\b", text)
-                hit = m.group(1) if m else None
-            if prop == "country" and hit is None:
-                m = re.search(r"\bto ([A-Z]{2})\b", text)
-                hit = m.group(1) if m else None
-            if prop == "name" and hit is None:
-                m = re.search(r"runbook (?:for|named|on) ([a-z ]+)", lower) or re.search(r"(?:policy|the) ([a-z_ ]+?) policy", lower)
-                hit = m.group(1).strip() if m else None
-            if prop == "topic" and hit is None:
-                hit = " ".join(content_words(clause)[:2])
-            value = hit
-        elif prop == "engineer_id":
-            m = re.search(r"\bFSE-\d{2}\b", text)
-            value = m.group(0) if m else from_results(req, "engineer_id")
-        elif prop == "slot_start":
-            value = from_results(req, "slot_start")
-        elif prop == "email" or prop == "to":
-            m = EMAIL.search(text)
-            value = m.group(0) if m else from_results(req, "email")
-        elif prop in ("summary", "justification", "action", "description", "resolution", "note", "reason", "text", "body", "title",
-                      "subject", "query", "address", "location", "value", "reference", "options"):
-            if prop == "query":
-                value = " ".join(content_words(clause)[:6]) or clause[:80]
-            elif prop == "location":
-                m = re.search(r"\b(?:SITE-\d{4}-[A-Z]|WH-(?:EAST|WEST|EU))\b", text)
-                value = m.group(0) if m else None
-            elif prop == "reference":
-                m = re.search(r"reference ([A-Z0-9-]+)", text)
-                value = m.group(1) if m else (re.search(r"\b(?:SVC|SO|RMA)-\d+\b", text) or [None])
-                value = value if isinstance(value, str) else (value.group(0) if value else "support request")
-            elif prop in ("text", "body"):
-                value = f"Update from Kestrel support ({TODAY}): {clause[:240]}"
-            elif prop == "summary":
-                value = f"{clause[:200]} (from: {text[:120]})" if clause != text else text[:300]
-            elif prop == "title":
-                value = clause[:80]
-            elif prop == "subject":
-                value = clause[:60]
-            else:
-                value = clause[:240]
-        else:
-            # generic: an ID whose format the argument's own description shows, a value from earlier results, else nothing
-            for pat in prefix_regex(desc):
-                m = pat.search(text) or pat.search(convo)
-                if m:
-                    value = m.group(0)
-                    break
-            if value is None:
-                value = from_results(req, prop)
-            if value is None and prop.endswith("_id"):
-                value = None
-        if value is None and prop in required:
-            return None
-        if value is not None:
-            if kind == "integer" and not isinstance(value, int):
-                try:
-                    value = int(float(value))
-                except (TypeError, ValueError):
-                    return None if prop in required else args
-            if kind == "number" and not isinstance(value, (int, float)):
-                try:
-                    value = float(value)
-                except (TypeError, ValueError):
-                    return None if prop in required else args
-            if kind == "array" and isinstance(value, str):
-                value = [value]
-            args[prop] = value
-    return args
+def _find(pattern: re.Pattern, *texts: str) -> str | None:
+    for t in texts:
+        m = pattern.search(t or "")
+        if m:
+            return m.group(0)
+    return None
 
 
 def infer_queue(clause: str) -> str:
     lower = clause.lower()
     for queue, words in (("security", ("phish", "fraud", "inject", "override", "suspicious")),
-                         ("logistics", ("carrier", "shipment", "track", "scan", "deliver", "customs", "pickup", "pallet", "parcel")),
                          ("billing", ("invoice", "refund", "credit", "payment", "fee", "balance", "paid", "charge")),
+                         ("logistics", ("carrier", "shipment", "track", "scan", "deliver", "customs", "pickup", "pallet", "parcel")),
                          ("quality", ("lot", "hold", "incident", "test", "build")),
-                         ("field_service", ("engineer", "visit", "ticket", "fault", "telemetry", "vibration", "warranty", "seal", "leak", "pump"))):
-        if any(w in lower for w in words):
+                         ("field_service", ("engineer", "visit", "ticket", "fault", "telemetry", "vibration", "warranty", "seal",
+                                            "leak", "pump"))):
+        if any(re.search(rf"\b{w}", lower) for w in words):
             return queue
     return "account_management"
 
 
+def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, required: bool) -> Any:
+    desc = str(ps.get("description", ""))
+    lower = text.lower()
+    convo = req.conversation_text if required else ""
+    if isinstance(ps.get("enum"), list):                            # a closed set: the value the request names
+        hit = next((o for o in ps["enum"] if _mentioned(str(o), clause)), None) or \
+            next((o for o in ps["enum"] if _mentioned(str(o), text)), None)
+        return hit if hit is not None or not required else ps["enum"][0]
+    if prop in FORMATS:
+        found = _find(FORMATS[prop], clause, text)
+        if prop == "to_warehouse":
+            found = (WAREHOUSE.findall(text)[1:2] or [None])[0]
+        if found is None and prop == "sku" and required:
+            found = from_results(req, "sku")
+        if found is None and required:
+            found = _find(FORMATS[prop], convo) or from_results(req, prop) or \
+                (from_results(req, "seal_lot") if prop == "lot" else None) or \
+                (from_results(req, "code") if prop == "fault_code" else None)
+        return found
+    if prop in ("from_date", "to_date", "date", "since", "due_date", "window_start", "window_end", "start", "end"):
+        dates = DATE.findall(clause) or DATE.findall(text)
+        if prop in ("to_date", "window_end", "end"):
+            return dates[1] if len(dates) > 1 else (dates[0] if dates and required else None)
+        return dates[0] if dates else None
+    if prop == "days":
+        m = re.search(r"(?:last|past)\s+(\d{1,3})\s+days|(\d{1,3})[- ]day", lower)
+        return int(m.group(1) or m.group(2)) if m else (7 if required else None)
+    if prop == "slot_start":
+        return from_results(req, "slot_start") if required else None
+    if prop in ("amount_usd", "threshold"):
+        m = AMOUNT.search(clause) or AMOUNT.search(text)
+        if m:
+            return float(m.group(1).replace(",", ""))
+        pct = PERCENT.search(clause)
+        base = from_results(req, "open_amount_usd") or from_results(req, "amount_usd")
+        if pct and base:
+            return round(float(base) * float(pct.group(1)) / 100, 2)
+        return None
+    if prop in ("qty", "pieces", "reorder_point", "weight_kg"):
+        unit = {"weight_kg": r"kg\b", "pieces": r"pieces?\b"}.get(prop, r"(?:x\s+|units?\b|pieces?\b|kits?\b|[A-Z]{2}-)")
+        m = re.search(rf"\b(\d{{1,4}})\s*{unit}", clause) or re.search(r"\b(\d{1,3})\s*x\b", clause)
+        if m:
+            return int(m.group(1))
+        return 1 if required and prop == "qty" else None
+    if prop == "percent":
+        m = PERCENT.search(clause)
+        return float(m.group(1)) if m else None
+    if prop == "priority":
+        m = re.search(r"\bP[1-4]\b", text)
+        return m.group(0) if m else (("P1" if any(w in lower for w in SAFETY_WORDS) else "P3") if required else None)
+    if prop == "severity":
+        return ("safety" if any(w in lower for w in SAFETY_WORDS) else "medium") if required else None
+    if prop == "queue":
+        return infer_queue(clause) if required else None
+    if prop == "approver_role":
+        return next((o for o in _options(desc) if _mentioned(o, text)), "support_manager")
+    if prop in ("channel", "team"):
+        m = re.search(r"\b(logistics|billing|quality|field[- ]service|support)\b", lower)
+        return m.group(1).replace(" ", "-") if m else ("support" if required else None)
+    if prop == "email" or prop == "to":
+        return _find(EMAIL, clause, text) or (from_results(req, "email") if required else None)
+    if prop == "customer_id":
+        return _find(re.compile(r"\bC-\d{4}\b"), clause, text) or (from_results(req, "customer_id") if required else None)
+    if prop == "site_id":
+        return _find(re.compile(r"\bSITE-\d{4}-[A-Z]\b"), clause, text) or (from_results(req, "site_id") if required else None)
+    if prop in ("skill", "service", "metric", "status", "field", "reason_code", "country"):
+        options = _options(desc)
+        hit = next((o for o in options if _mentioned(o, clause)), None) or next((o for o in options if _mentioned(o, text)), None)
+        if prop == "reason_code" and hit is None:
+            for words, code in ((("no", "longer"), "no_longer_needed"), (("wrong",), "wrong_item"), (("damag",), "damaged_in_transit"),
+                                (("defect",), "defective"), (("leak",), "defective")):
+                if all(w in lower for w in words):
+                    hit = code
+                    break
+        if prop == "country" and hit is None:
+            m = re.search(r"\bto ([A-Z]{2})\b", text)
+            hit = m.group(1) if m else None
+        return hit if hit is not None else None
+    if prop in FREE_TEXT:
+        if prop == "query":
+            return " ".join(content_words(clause)[:6]) or clause[:80]
+        if prop == "name":
+            m = re.search(r"runbook (?:for|named|on) ([a-z ]+)", lower) or re.search(r"\bthe ([a-z_ ]+?) policy", lower)
+            return m.group(1).strip() if m else None
+        if prop == "topic":
+            return " ".join(content_words(clause)[:2]) or None
+        if prop == "reference":
+            m = re.search(r"reference ([A-Z0-9-]+)", text) or re.search(r"\b(?:SVC|SO|RMA)-\d+\b", text)
+            return (m.group(1) if m and m.lastindex else m.group(0)) if m else ("support request" if required else None)
+        if not required:
+            return None
+        if prop in ("text", "body"):
+            return f"Update from Kestrel support ({TODAY}): {clause[:240]}"
+        if prop == "summary":
+            return clause[:200] if clause == text else f"{clause[:160]} (request: {text[:160]})"
+        if prop in ("title", "subject"):
+            return clause[:70]
+        return clause[:240]
+    # generic: an ID whose format the argument's own description shows, or a value from earlier results
+    for prefix in EG_PREFIX.findall(desc):
+        found = _find(re.compile(rf"\b{re.escape(prefix)}[0-9A-Z][0-9A-Z-]*\b"), clause, text, convo)
+        if found:
+            return found
+    return from_results(req, prop) if required else None
+
+
+def fill_args(t: dict, req: MockRequest, text: str, clause: str) -> dict | None:
+    """Fill a tool's arguments from the request; None when a required argument is not available (yet)."""
+    schema = t.get("input_schema") or {}
+    required = set(schema.get("required") or [])
+    args: dict[str, Any] = {}
+    for prop, ps in (schema.get("properties") or {}).items():
+        ps = ps if isinstance(ps, dict) else {}
+        value = _value(prop, ps, req, text, clause, prop in required)
+        kind = ps.get("type", "string")
+        if value is not None:
+            try:
+                if kind == "integer" and not isinstance(value, int):
+                    value = int(float(value))
+                elif kind == "number" and not isinstance(value, (int, float)):
+                    value = float(value)
+                elif kind == "array" and not isinstance(value, list):
+                    value = [value]
+                elif kind == "string" and not isinstance(value, str):
+                    value = str(value)
+            except (TypeError, ValueError):
+                value = None
+        if value is None:
+            if prop in required:
+                return None
+            continue
+        args[prop] = value
+    return args
+
+
 # ------------------------------------------------------------------------------------------ answers
+def _fact(v: Any) -> str:
+    if isinstance(v, dict):
+        return ", ".join(f"{a}={b}" for a, b in v.items() if isinstance(b, (str, int, float)))[:110]
+    return str(v)
+
+
 def describe_result(c: ToolCall) -> str:
-    args = ", ".join(f"{k}={v}" for k, v in list(c.input.items())[:3])
-    if c.is_error:
-        data = c.result_json() or {}
-        err = data.get("error") if isinstance(data, dict) else None
-        msg = (err or {}).get("message") if isinstance(err, dict) else (c.result or "")
-        return f"{c.name}({args}) failed: {msg}"
+    args = ", ".join(f"{k}={v}" for k, v in list(c.input.items())[:2])
     data = c.result_json()
+    if c.is_error:
+        err = (data or {}).get("error") if isinstance(data, dict) else None
+        msg = err.get("message") if isinstance(err, dict) else (c.result or "")
+        return f"- {c.name}({args}) failed: {msg}"
     if not isinstance(data, dict):
-        return f"{c.name}({args}): {(c.result or '')[:160]}"
+        return f"- {c.name}({args}): {(c.result or '')[:160]}"
     facts = []
     for k, v in data.items():
-        if isinstance(v, (str, int, float, bool)) and v not in ("", None):
+        if isinstance(v, (str, int, float, bool)) and v not in ("", None) and k not in c.input:
             facts.append(f"{k} {v}")
+        elif isinstance(v, list) and v and isinstance(v[0], dict) and len(v) <= 12 and len(facts) == 0:
+            items = ["/".join(str(x) for x in list(item.values())[:3] if isinstance(x, (str, int, float))) for item in v]
+            facts.append(f"{len(v)} {k}: " + "; ".join(items))
         elif isinstance(v, list) and v:
-            first = v[0]
-            head = ", ".join(f"{a}={b}" for a, b in (first.items() if isinstance(first, dict) else [])
-                             if isinstance(b, (str, int, float)))[:120]
-            facts.append(f"{len(v)} {k}" + (f" (first: {head})" if head else ""))
+            facts.append(f"{len(v)} {k} (first: {_fact(v[0])})" if isinstance(v[0], dict) else f"{k} {', '.join(map(str, v[:4]))}")
         elif isinstance(v, dict) and v:
-            head = ", ".join(f"{a}={b}" for a, b in v.items() if isinstance(b, (str, int, float)))[:120]
-            facts.append(f"{k}: {head}")
-        if len(facts) >= 6:
+            facts.append(f"{k}: {_fact(v)}")
+        if len(facts) >= 5:
             break
-    return f"{c.name}({args}): " + "; ".join(facts)
+    return f"- {c.name}({args}): " + "; ".join(facts)
 
 
-def compose(calls: list[ToolCall], unmet: list[str], escalated: bool) -> str:
-    lines = [describe_result(c) for c in calls if not c.name.startswith("escalate")]
+def compose(calls: list[ToolCall], unmet: list[str]) -> str:
+    lines = [describe_result(c) for c in calls if c.name != "escalate_to_human"]
     esc = [c for c in calls if c.name == "escalate_to_human" and not c.is_error]
-    if unmet and esc:
+    if esc:
         d = esc[-1].result_json() or {}
-        lines.append(f"I have no tool for: {'; '.join(unmet)}. Escalated to the {d.get('queue')} queue as {d.get('escalation_id')} "
-                     f"({d.get('priority')}, {d.get('sla')}).")
+        lines.append(f"- No tool I have covers: {'; '.join(unmet) or 'part of the request'}. I escalated it to the "
+                     f"{d.get('queue')} queue as {d.get('escalation_id')} ({d.get('priority')}, {d.get('sla')}).")
     elif unmet:
-        lines.append(f"I could not do the following with the tools available to me: {'; '.join(unmet)}.")
-    return " ".join(lines) if lines else "I did not need any tool for that."
+        lines.append(f"- I could not do this with the tools available to me: {'; '.join(unmet)}.")
+    return "Here is what I found:\n" + "\n".join(lines) if lines else "I did not need any tool for that."
 
 
 # ------------------------------------------------------------------------------------------ the planner
-def plan(req: MockRequest, *, allow_search: bool, escalate_unmet: bool, single: bool = False) -> Reply:
-    """One tool per clause of the latest question: search when the best tool is deferred and a search tool exists,
-    call when it is loaded and its arguments are available, defer a clause whose arguments depend on another
-    clause's result, escalate (or admit) what no tool covers. Answer when nothing is pending."""
+def _recover(req: MockRequest, calls: list[ToolCall], text: str) -> Reply | None:
+    """A failed call whose error names another visible tool ('... use get_shipment_v2') -> retry with that tool."""
+    visible = {t["name"]: t for t in visible_tools(req)}
+    called = {c.name for c in calls}
+    for c in calls:
+        if not c.is_error:
+            continue
+        data = c.result_json()
+        msg = json.dumps(data) if isinstance(data, dict) else (c.result or "")
+        m = re.search(r"\buse ([a-z][a-z0-9_]+)", msg)
+        if m and m.group(1) in visible and m.group(1) not in called:
+            args = fill_args(visible[m.group(1)], req, text, text) or {}
+            return use_tools(tool(m.group(1), **{**c.input, **args}), thinking="The error names the tool to use instead.")
+    return None
+
+
+def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False) -> Reply:
+    """One tool per clause of the latest request, chosen among the tools the model can see.
+
+    Search when nothing visible covers a clause (and a search tool is declared); call covering tools whose arguments
+    are available; wait for a result when a later clause needs one; escalate (or admit) what nothing covers; answer
+    when nothing is pending."""
     text, q_idx = segment(req)
     calls, searches, _ = since(req, q_idx)
-    tools = custom_tools(req)
-    loaded = req.loaded_tool_names
+    everything = custom_tools(req)
     search_tool = req.server_tools.get("tool_search")
-    variant = "regex" if search_tool and "regex" in search_tool["type"] else "bm25"
-    by_name = {t["name"]: t for t in tools}
-    already_searched = {(s.get("pattern") or s.get("query") or "") for s in searches}
-    called = {c.name for c in calls}
+    variant = "regex" if search_tool and "regex" in search_tool.get("type", "") else "bm25"
+    just_searched = ends_with_search(req)
+    searched = {query_of(s) for s in searches}
+    parallel_ok = not (req.tool_choice or {}).get("disable_parallel_tool_use")
 
-    # error recovery: a failed call whose message names the tool to use instead (deprecations, wrong-tool errors)
-    for c in calls:
-        if c.is_error:
-            data = c.result_json() or {}
-            msg = str(data.get("error", data)) if isinstance(data, dict) else (c.result or "")
-            m = re.search(r"use ([a-z_]+_v\d|[a-z_]+)\b", msg)
-            if m and m.group(1) in loaded and m.group(1) not in called and m.group(1) in by_name:
-                args = fill_args(by_name[m.group(1)], req, text, text)
-                if args is not None:
-                    return use_tools(tool(m.group(1), **{**c.input, **args}), thinking="Switch to the tool the error names.")
+    recovery = _recover(req, calls, text)
+    if recovery is not None:
+        return recovery
+
+    visible = visible_tools(req)
+    by_name = {t["name"]: t for t in visible}
+    decisions: list[tuple[str, list[str], str | None, dict | None]] = []
+    for clause in ([text] if single else clauses_of(text)):
+        terms = terms_of(clause)
+        query = terms + [_stem(w) for w in id_words(clause, everything) if _stem(w) not in terms]
+        ranked = [r[1] for r in rank(query, visible, question=is_question(clause))
+                  if single or coverage(terms, by_name[r[1]]) >= COVER_MIN]
+        chosen, args = None, None
+        for name in ranked[:3]:                              # the best covering tool whose arguments are available
+            args = fill_args(by_name[name], req, text, clause)
+            if args is not None:
+                chosen = name
+                break
+        decisions.append((clause, ranked, chosen, args))
+        if single and chosen:
+            break
 
     pending: list[dict] = []
+    for clause, ranked, chosen, args in decisions:
+        if chosen is None or any(p["name"] == chosen for p in pending):
+            continue
+        if any(c.name == chosen and all(c.input.get(k) == v for k, v in args.items()) for c in calls):
+            continue                                         # done already
+        pending.append(tool(chosen, **args))
+    to_search: list[str] = []
     unmet: list[str] = []
-    waiting = False
-    cls = [text] if single else clauses_of(text)
-    for clause in cls:
-        query = terms_of(clause) + [_stem(w) for w in id_words(clause, tools) if _stem(w) not in terms_of(clause)]
-        candidates = tools if (allow_search and search_tool) else [t for t in tools if t["name"] in loaded]
-        ranked = rank(query, candidates, question=is_question(clause))
-        if not ranked:
+    for clause, ranked, chosen, args in decisions:
+        if chosen is not None:
+            continue
+        if ranked and pending:
+            continue                                         # covered, but it needs a result that has not arrived yet
+        if search_tool and not just_searched and not single:
+            to_search.append(clause)
+        elif not is_statement(clause):
             unmet.append(clause)
-            continue
-        score, name, matched = ranked[0]
-        if name not in loaded:
-            q = search_query(clause, tools, variant)
-            if allow_search and search_tool and q not in already_searched:
-                return Reply(content=[search_tools(q)], thinking_summary=f"No loaded tool fits '{clause[:40]}'; search the catalog.")
-            # searched already and still not loaded: fall back to the best loaded tool, if any fits at all
-            ranked = rank(query, [t for t in tools if t["name"] in loaded], question=is_question(clause))
-            if not ranked:
-                unmet.append(clause)
-                continue
-            score, name, matched = ranked[0]
-        if name in called:
-            continue
-        args = fill_args(by_name[name], req, text, clause)
-        if args is None:
-            waiting = True
-            continue
-        if not any(p["name"] == name for p in pending):
-            pending.append(tool(name, **args))
-        if single:
-            break
+
+    if to_search:
+        query = search_query(to_search, everything, variant)
+        if query not in searched:
+            limit = 5 if len(to_search) == 1 else 10
+            return Reply(content=[search_tools(query, limit=limit if limit != 5 else None)],
+                         thinking_summary=f"No visible tool covers '{to_search[0][:50]}'; search the catalog.")
+        unmet += [c for c in to_search if not is_statement(c)]   # searched with these words already
     if pending:
+        if not parallel_ok:
+            pending = pending[:1]
         preface = None if calls else ("Let me check." if len(pending) == 1 else "Let me look those up.")
-        return use_tools(*pending, preface=preface, thinking="Pick the most specific tool for each part of the request.")
-    if waiting and calls:
-        # arguments for a later clause never became available: say what is missing
-        return say("I could not complete every step: a later step needs a value that the earlier results did not provide. "
-                   + compose(calls, unmet, False), complexity=0.4)
-    if waiting:
-        return say("I need one more detail before I can do that (an ID or a date that the request does not contain).", complexity=0.2)
-    if unmet and escalate_unmet and "escalate_to_human" in loaded and "escalate_to_human" not in called:
-        summary = f"Needs a person: {'; '.join(unmet)[:300]}. Context: {text[:200]}"
+        return use_tools(*pending, preface=preface, thinking="Use the most specific tool for each part of the request.")
+    if unmet and escalate_unmet and "escalate_to_human" in by_name and not any(c.name == "escalate_to_human" for c in calls):
+        summary = f"Needs a person: {'; '.join(unmet)[:300]}"
         priority = "P1" if any(w in text.lower() for w in SAFETY_WORDS) else "P3"
         return use_tools(tool("escalate_to_human", queue=infer_queue(" ".join(unmet)), priority=priority, summary=summary),
-                         thinking="No tool covers part of the request: hand it to the right queue.")
-    return say(compose(calls, unmet, "escalate_to_human" in called), complexity=0.45,
-               thinking="Compose the answer only from the tool results.")
+                         thinking="No tool I can see covers part of the request: hand it to the right queue.")
+    return say(compose(calls, unmet), complexity=0.45, thinking="Compose the answer from the tool results only.")
 
 
 # ------------------------------------------------------------------------------------------ scenarios
@@ -561,16 +639,16 @@ def tool_search_only(req: MockRequest) -> Reply:
     text, q_idx = segment(req)
     _, searches, results = since(req, q_idx)
     search_tool = req.server_tools.get("tool_search")
-    variant = "regex" if search_tool and "regex" in search_tool["type"] else "bm25"
+    variant = "regex" if search_tool and "regex" in search_tool.get("type", "") else "bm25"
     verbatim = re.search(r"`([^`]+)`", text)
     if not searches:
-        query = verbatim.group(1) if verbatim else search_query(text, custom_tools(req), variant)
+        query = verbatim.group(1) if verbatim else search_query([text], custom_tools(req), variant)
         return Reply(content=[search_tools(query)], thinking_summary="Search the catalog before choosing a tool.")
     last = results[-1] if results else {}
     if last.get("type") == "tool_search_tool_result_error":
-        if verbatim and len(searches) == 1:
-            fixed = re.sub(r"[()\[\]{}]", "", verbatim.group(1)) or "shipment"
-            return Reply(content=[search_tools(fixed)], thinking_summary="The pattern was invalid; retry without the unbalanced bracket.")
+        if len(searches) == 1:
+            fixed = re.sub(r"[()\[\]{}]", "", query_of(searches[0])) or "shipment"
+            return Reply(content=[search_tools(fixed)], thinking_summary="The pattern was invalid; retry without the bracket.")
         return say(f"The search failed ({last.get('error_code')}: {last.get('error_message')}).", complexity=0.2)
     names = [r.get("tool_name") for r in last.get("tool_references") or []]
     if not names:
@@ -580,49 +658,80 @@ def tool_search_only(req: MockRequest) -> Reply:
 
 @scenario("adv.day2.wide_agent", match=lambda r: MARK_WIDE in r.system_text, priority=10)
 def wide_agent(req: MockRequest) -> Reply:
-    return plan(req, allow_search=True, escalate_unmet=True)
+    return plan(req, escalate_unmet=True)
 
 
 @scenario("adv.day2.phases", match=lambda r: MARK_PHASES in r.system_text, priority=10)
 def phased_agent(req: MockRequest) -> Reply:
-    return plan(req, allow_search=False, escalate_unmet=False)
+    return plan(req, escalate_unmet=False)
 
 
 @scenario("adv.day2.selection", match=lambda r: MARK_SELECT in r.system_text, priority=10)
 def selection(req: MockRequest) -> Reply:
-    return plan(req, allow_search=False, escalate_unmet=False, single=True)
+    if req.is_tool_result_turn:
+        calls, _, _ = since(req, segment(req)[1])
+        return say(compose(calls, []), complexity=0.3)
+    return plan(req, escalate_unmet=False, single=True)
 
 
-# ------------------------------------------------------------------------------------------ lab 05: PTC
+# ------------------------------------------------------------------------------------------ lab 05: recall triage
 TRIAGE_CELL = '''import asyncio, json
-serials = {serials}
-readings = [json.loads(r) for r in await asyncio.gather(*[get_pump_telemetry({{"serial_number": s}}) for s in serials])]
-hot = [r for r in readings if r.get("seal_temp_c", 0) > {threshold}]
-trends = {{}}
-if hot:
-    raw = await asyncio.gather(*[get_vibration_trend({{"serial_number": r["serial_number"], "days": 7}}) for r in hot])
-    trends = {{r["serial_number"]: json.loads(t) for r, t in zip(hot, raw)}}
+units = {units}
+pumps = [s for s, u in units.items() if u["sku"].startswith("KP")]
+boards = [s for s, u in units.items() if u["sku"].startswith("KC")]
+# every look-up at once: the container pauses once and hands all of them to the client
+raw = await asyncio.gather(*[get_pump_telemetry({{"serial_number": s}}) for s in pumps],
+                           *[get_fault_codes({{"serial_number": s, "days": 7}}) for s in boards])
+tele = {{s: json.loads(r) for s, r in zip(pumps, raw[:len(pumps)])}}
+faults = {{s: json.loads(r) for s, r in zip(boards, raw[len(pumps):])}}
+hot = [s for s in pumps if tele[s]["seal_temp_c"] > {threshold}]
+trend = {{s: json.loads(r)["assessment"] for s, r in
+         zip(hot, await asyncio.gather(*[get_vibration_trend({{"serial_number": s, "days": 7}}) for s in hot]))}}
 triage = []
-for r in readings:
-    t = trends.get(r["serial_number"], {{}})
-    is_hot = r.get("seal_temp_c", 0) > {threshold}
-    priority = "P1" if is_hot and t.get("assessment") == "rising" else "P2" if is_hot else "P3"
-    triage.append({{"serial_number": r["serial_number"], "sku": r.get("sku"), "seal_temp_c": r.get("seal_temp_c"),
-                   "vibration_mm_s": r.get("vibration_mm_s"), "trend": t.get("assessment", "not checked"), "priority": priority}})
-triage.sort(key=lambda x: (x["priority"], -x["seal_temp_c"]))
-print(json.dumps({{"units": len(readings), "hot": len(hot), "triage": triage}}))
+for s, u in units.items():
+    if s in tele:
+        t = tele[s]
+        is_hot = t["seal_temp_c"] > {threshold}
+        p = "P1" if is_hot and (trend.get(s) == "rising" or u["risk"] == "safety") else "P2" if is_hot else "P3"
+        triage.append({{"serial": s, "sku": u["sku"], "region": u["region"], "signal": f"seal {{t['seal_temp_c']}} C",
+                       "trend": trend.get(s, "-"), "priority": p}})
+    else:
+        n = sum(1 for c in faults[s]["codes"] if c["code"] == "F17")
+        triage.append({{"serial": s, "sku": u["sku"], "region": u["region"], "signal": f"{{n}} x F17 in 7 days",
+                       "trend": "-", "priority": "P2" if n >= {faults} else "P3"}})
+triage.sort(key=lambda r: (r["priority"], r["serial"]))
+print(json.dumps({{"units": len(triage), "by_priority": {{p: sum(r["priority"] == p for r in triage) for p in ("P1", "P2", "P3")}},
+                  "triage": [{{k: r[k] for k in ("serial", "priority", "signal", "trend")}} for r in triage]}}))
 '''
 
-KITS_CELL = '''import json
-regions = {regions}
-kits = {{"KP-250-S": "MS-250-R", "KP-100-S": "MS-100-R"}}
+KITS_CELL = '''import asyncio, json
+kit_for = {kits}
+warehouse_for = {warehouses}
 need = {{}}
-for row in triage:
-    if row["priority"] in ("P1", "P2"):
-        key = (regions.get(row["serial_number"], "?"), kits.get(row["sku"], "n/a"))
-        need[key] = need.get(key, 0) + 1
-print(json.dumps([{{"region": r, "kit": k, "units": n}} for (r, k), n in sorted(need.items())]))
+for s, u in units.items():                      # `units` is still in the container from the previous cell
+    key = (warehouse_for[u["region"]], kit_for[u["sku"]])
+    need[key] = need.get(key, 0) + 1
+stock_raw = await asyncio.gather(*[get_stock({{"sku": k}}) for k in sorted(set(kit_for.values()))])
+stock = {{}}
+for r in stock_raw:
+    d = json.loads(r)
+    for row in d["stock"]:
+        stock[(row["warehouse"], d["sku"])] = row["available"]
+rows = [{{"warehouse": w, "kit": k, "units": n, "in_stock": stock.get((w, k), 0), "short": max(0, n - stock.get((w, k), 0))}}
+        for (w, k), n in sorted(need.items())]
+print(json.dumps(rows))
 '''
+
+
+def _units_from(text: str) -> dict[str, dict]:
+    """The unit table in the request: one line per unit with serial, SKU, region and risk class."""
+    units = {}
+    for line in text.splitlines():
+        s, k, r = SERIAL.search(line), SKU.search(line), REGION.search(line)
+        if s and k and r:
+            risk = next((w for w in ("safety", "production", "standard") if w in line.lower()), "standard")
+            units[s.group(0)] = {"sku": k.group(0), "region": r.group(0), "risk": risk}
+    return units
 
 
 def _threshold(text: str) -> int:
@@ -630,112 +739,168 @@ def _threshold(text: str) -> int:
     return int(m.group(1)) if m else 70
 
 
-def _regions_from_text(text: str) -> dict[str, str]:
-    out = {}
-    for line in text.splitlines():
-        s, r = SERIAL.search(line), REGION.search(line)
-        if s and r:
-            out[s.group(0)] = r.group(0)
-    return out
+def _fault_limit(text: str) -> int:
+    m = re.search(r"(\d+)\s*(?:\+|or more)\s*F17", text)
+    return int(m.group(1)) if m else 5
+
+
+def _mapping(text: str, pattern: str) -> dict[str, str]:
+    return {a: b for a, b in re.findall(pattern, text)}
+
+
+def _triage_rows(units: dict, tele: dict, faults: dict, trends: dict, threshold: int, limit: int) -> list[dict]:
+    rows = []
+    for s, u in units.items():
+        if s in tele:
+            t = tele[s]
+            hot = t.get("seal_temp_c", 0) > threshold
+            p = "P1" if hot and (trends.get(s) == "rising" or u["risk"] == "safety") else "P2" if hot else "P3"
+            rows.append({"serial": s, "priority": p, "signal": f"seal {t.get('seal_temp_c')} C", "trend": trends.get(s, "-")})
+        elif s in faults:
+            n = sum(1 for c in faults[s].get("codes", []) if c.get("code") == "F17")
+            rows.append({"serial": s, "priority": "P2" if n >= limit else "P3", "signal": f"{n} x F17 in 7 days", "trend": "-"})
+    return sorted(rows, key=lambda r: (r["priority"], r["serial"]))
+
+
+def _say_triage(rows: list[dict], threshold: int) -> Reply:
+    counts = {p: sum(r["priority"] == p for r in rows) for p in ("P1", "P2", "P3")}
+    lines = [f"  {r['priority']}  {r['serial']:<16} {r['signal']:<20} trend {r['trend']}" for r in rows]
+    return say(f"Triage of {len(rows)} units (seal-chamber limit {threshold} C): {counts['P1']} P1, {counts['P2']} P2, "
+               f"{counts['P3']} P3.\n" + "\n".join(lines), complexity=0.45)
+
+
+def _say_kits(rows: list[dict]) -> Reply:
+    short = [r for r in rows if r["short"]]
+    lines = [f"  {r['warehouse']:<8} {r['kit']:<9} need {r['units']:>2}  in stock {r['in_stock']:>2}"
+             + (f"  SHORT {r['short']}" if r["short"] else "") for r in rows]
+    verdict = ("Short: " + ", ".join(f"{r['short']} x {r['kit']} at {r['warehouse']}" for r in short)) if short else "No shortages."
+    return say("Remedy kits needed for all units, by warehouse:\n" + "\n".join(lines) + "\n" + verdict, complexity=0.4)
 
 
 @scenario("adv.day2.ptc", match=lambda r: MARK_PTC in r.system_text, priority=10)
-def ptc_triage(req: MockRequest) -> Reply:
+def recall_triage(req: MockRequest) -> Reply:
     text, q_idx = segment(req)
-    calls, _, _ = since(req, q_idx)
-    serials = list(dict.fromkeys(SERIAL.findall(text)))
-    threshold = _threshold(req.first_user_text)
-    kits_turn = "kit" in text.lower() and "region" in text.lower()
-    programmatic = req.server_tools.get("code_execution") is not None and bool(req.code_callable_tools)
+    units = _units_from(req.first_user_text)
+    threshold, limit = _threshold(req.first_user_text), _fault_limit(req.first_user_text)
+    kits_turn = "kit" in text.lower() and "stock" in text.lower()
+    kits = _mapping(text, r"\b((?:MS-\d{3}-R|KC-2-PSB))\s+for\s+(?:the\s+)?(KP-\d{3}-S|KC-2)\b")
+    kit_for = {sku: kit for kit, sku in kits.items()}
+    warehouse_for = {r: w for r, w in re.findall(r"\b(US-EAST|US-WEST|EU|APAC)\s*(?:->|=>|:)\s*(WH-[A-Z]+)", text)}
+    code_path = req.server_tools.get("code_execution") is not None and bool(req.code_callable_tools)
+    parallel_ok = not (req.tool_choice or {}).get("disable_parallel_tool_use")
 
-    if programmatic:
+    if code_path:
         if req.completed_code is not None:
             out = req.completed_code["content"]
             if out.get("return_code") != 0:
-                return say(f"The script failed: {out.get('stderr', '')[:200]}", complexity=0.3)
-            try:
-                data = json.loads(out["stdout"].strip().splitlines()[-1])
-            except (ValueError, IndexError):
-                return say("Script output: " + out.get("stdout", "")[:400], complexity=0.3)
+                return say(f"The script failed: {out.get('stderr', '')[:300]}", complexity=0.3)
+            data = json.loads(out["stdout"].strip().splitlines()[-1])
             if isinstance(data, dict) and "triage" in data:
-                rows = "; ".join(f"{r['serial_number']} {r['priority']} ({r['seal_temp_c']} C, {r['trend']})" for r in data["triage"])
-                return say(f"Triage of {data['units']} units, {data['hot']} above {threshold} C: {rows}.", complexity=0.4)
-            return say("Kits needed by region: " + "; ".join(f"{r['region']} {r['kit']} x{r['units']}" for r in data) + ".", complexity=0.3)
-        if req.code_results:            # a cell already ran for this question and the answer was given
-            return say("Done.", complexity=0.1)
+                return _say_triage(data["triage"], threshold)
+            return _say_kits(data)
+        calls, _, _ = since(req, q_idx)
+        if any(b.get("type") == "code_execution_tool_result" for m in req.messages[q_idx + 1:] if m.get("role") == "assistant"
+               for b in _blocks(m.get("content"))):
+            return say("Done - see the table above.", complexity=0.1)
         if kits_turn:
-            return Reply(content=[run_code(KITS_CELL.format(regions=json.dumps(_regions_from_text(req.first_user_text))))],
-                         thinking_summary="The triage list is still in the container; aggregate it there.")
-        return Reply(content=[run_code(TRIAGE_CELL.format(serials=json.dumps(serials), threshold=threshold))],
-                     thinking_summary="Fan out the telemetry calls in code and only return the triage table.")
+            return Reply(content=[run_code(KITS_CELL.format(kits=json.dumps(kit_for), warehouses=json.dumps(warehouse_for)))],
+                         thinking_summary="The unit table is still in the container; count kits there and check stock.")
+        return Reply(content=[run_code(TRIAGE_CELL.format(units=json.dumps(units, indent=1), threshold=threshold, faults=limit))],
+                     thinking_summary="Fan the look-ups out in code; only the triage table needs to come back.")
 
-    # standard tool use: every result comes back into the context
+    # direct tool use: every result comes back into the context
+    calls, _, _ = since(req, q_idx)
+    everything = req.tool_calls
     if kits_turn:
-        regions = _regions_from_text(req.first_user_text)
-        kits = {"KP-250-S": "MS-250-R", "KP-100-S": "MS-100-R"}
+        stock_calls = [c for c in calls if c.name == "get_stock"]
+        wanted = sorted(set(kit_for.values()))
+        missing = [k for k in wanted if not any(c.input.get("sku") == k for c in stock_calls)]
+        if missing:
+            batch = missing if parallel_ok else missing[:1]
+            return use_tools(*[tool("get_stock", sku=k) for k in batch], preface="Checking recall-kit stock.")
+        stock = {}
+        for c in stock_calls:
+            d = c.result_json() or {}
+            for row in d.get("stock", []):
+                stock[(row["warehouse"], d.get("sku"))] = row["available"]
         need: dict[tuple[str, str], int] = {}
-        for c in req.tool_calls:
-            if c.name == "get_pump_telemetry" and not c.is_error:
-                d = c.result_json() or {}
-                if d.get("seal_temp_c", 0) > threshold:
-                    key = (regions.get(d["serial_number"], "?"), kits.get(d.get("sku"), "n/a"))
-                    need[key] = need.get(key, 0) + 1
-        return say("Kits needed by region: " + "; ".join(f"{r} {k} x{n}" for (r, k), n in sorted(need.items())) + ".", complexity=0.4)
-    tele = [c for c in calls if c.name == "get_pump_telemetry"]
-    if not tele:
-        return use_tools(*[tool("get_pump_telemetry", serial_number=s) for s in serials], preface="Pulling the latest readings for every unit.")
-    hot = [c.result_json() for c in tele if not c.is_error and (c.result_json() or {}).get("seal_temp_c", 0) > threshold]
-    trends = {c.input.get("serial_number"): c.result_json() for c in calls if c.name == "get_vibration_trend" and not c.is_error}
-    missing = [r["serial_number"] for r in hot if r["serial_number"] not in trends]
-    if missing:
-        return use_tools(*[tool("get_vibration_trend", serial_number=s, days=7) for s in missing],
-                         preface=f"{len(hot)} units are above {threshold} C; checking their vibration trends.")
-    rows = []
-    for c in tele:
-        d = c.result_json() or {}
-        t = trends.get(d.get("serial_number"), {})
-        is_hot = d.get("seal_temp_c", 0) > threshold
-        pr = "P1" if is_hot and t.get("assessment") == "rising" else "P2" if is_hot else "P3"
-        rows.append((pr, -d.get("seal_temp_c", 0), f"{d.get('serial_number')} {pr} ({d.get('seal_temp_c')} C, {t.get('assessment', 'not checked')})"))
-    rows.sort()
-    return say(f"Triage of {len(tele)} units, {len(hot)} above {threshold} C: " + "; ".join(r[2] for r in rows) + ".", complexity=0.5)
+        for s, u in units.items():
+            key = (warehouse_for.get(u["region"], "?"), kit_for.get(u["sku"], "?"))
+            need[key] = need.get(key, 0) + 1
+        rows = [{"warehouse": w, "kit": k, "units": n, "in_stock": stock.get((w, k), 0), "short": max(0, n - stock.get((w, k), 0))}
+                for (w, k), n in sorted(need.items())]
+        return _say_kits(rows)
+    tele = {c.input.get("serial_number"): c.result_json() or {} for c in everything if c.name == "get_pump_telemetry" and not c.is_error}
+    faults = {c.input.get("serial_number"): c.result_json() or {} for c in everything if c.name == "get_fault_codes" and not c.is_error}
+    todo = [tool("get_pump_telemetry", serial_number=s) for s, u in units.items() if u["sku"].startswith("KP") and s not in tele]
+    todo += [tool("get_fault_codes", serial_number=s, days=7) for s, u in units.items() if u["sku"].startswith("KC") and s not in faults]
+    if todo:
+        return use_tools(*(todo if parallel_ok else todo[:1]), preface=None if calls else "Pulling the readings unit by unit.")
+    trends = {c.input.get("serial_number"): (c.result_json() or {}).get("assessment") for c in everything
+              if c.name == "get_vibration_trend" and not c.is_error}
+    hot = [s for s, t in tele.items() if t.get("seal_temp_c", 0) > threshold]
+    todo = [tool("get_vibration_trend", serial_number=s, days=7) for s in hot if s not in trends]
+    if todo:
+        return use_tools(*(todo if parallel_ok else todo[:1]))
+    return _say_triage(_triage_rows(units, tele, faults, trends, threshold, limit), threshold)
 
 
 # ------------------------------------------------------------------------------------------ lab 06: streaming
+def _facts(text: str) -> dict[str, dict]:
+    """Per-lot facts from the request: 'LOT: hazard ... | remedy ... | interim ...' lines."""
+    out = {}
+    for line in text.splitlines():
+        m = LOT.search(line)
+        if not m:
+            continue
+        parts = {k.strip().lower(): v.strip() for k, v in re.findall(r"(hazard|remedy|interim)\s*:\s*([^|]+)", line, re.I)}
+        if parts:
+            out[m.group(0)] = parts
+    return out
+
+
 @scenario("adv.day2.stream", match=lambda r: MARK_STREAM in r.system_text, priority=10)
 def bulletin_writer(req: MockRequest) -> Reply:
     text, q_idx = segment(req)
     calls, _, _ = since(req, q_idx)
     drafts = [c for c in calls if c.name == "draft_bulletin"]
-    if drafts:
+    limit = None
+    if drafts and not drafts[-1].is_error:
         d = drafts[-1].result_json() or {}
-        if drafts[-1].is_error:
-            return say(f"The draft was rejected: {(d.get('error') or {}).get('message', drafts[-1].result)}. I will correct the input and try again.",
-                       complexity=0.3)
-        return say(f"Bulletin {d.get('bulletin_id')} is drafted ({d.get('words')} words) and awaits review by {d.get('review_by')}.", complexity=0.3)
-    # facts from the request: lots, hazards, remedies, interim measures (the stand-in copies them into the body)
-    lots = LOT.findall(text)
-    hazard = re.findall(r"hazard[^:]*:\s*([^\n]+)", text, re.I)
-    remedy = re.findall(r"remedy[^:]*:\s*([^\n]+)", text, re.I)
-    interim = re.findall(r"interim[^:]*:\s*([^\n]+)", text, re.I)
+        return say(f"Bulletin {d.get('bulletin_id')} is saved as draft {d.get('draft_id')} ({d.get('words')} words, "
+                   f"{d.get('actions')} actions) and is waiting for review by {d.get('review_by')}.", complexity=0.3)
+    if drafts and len(drafts) >= 3:
+        return say("The draft was rejected three times; I stopped retrying. Last error: " + (drafts[-1].result or "")[:200],
+                   complexity=0.2)
+    if drafts:                                    # the client rejected the input: read the error and send it again
+        m = re.search(r"at most ([\d,]+) characters", drafts[-1].result or "")
+        limit = int(m.group(1).replace(",", "")) if m else None
+    facts = _facts(text)
+    lots = list(facts) or LOT.findall(text)
     m = re.search(r"\bTSB-\d{4}-\d{2}\b", text)
     bulletin_id = m.group(0) if m else "TSB-2026-09"
-    paragraphs = [f"Kestrel Pumps & Controls - Technical Safety Bulletin {bulletin_id}. Issued {TODAY}. Applies to units built with "
-                  f"{' and '.join(lots) if lots else 'the affected lots'}. This bulletin supersedes any verbal guidance given by field staff."]
-    for i, lot in enumerate(lots or ["the affected lot"]):
-        h = hazard[i] if i < len(hazard) else "see the recall notice"
-        r = remedy[i] if i < len(remedy) else "a field visit by a Kestrel engineer"
-        it = interim[i] if i < len(interim) else "follow the interim measure in the recall notice"
-        paragraphs.append(f"Lot {lot}. Hazard: {h.strip()} Remedy: {r.strip()} Interim measure until the remedy is applied: {it.strip()}")
-    paragraphs.append("What operators must do now: (1) identify affected serial numbers from the nameplate and the build record; "
-                      "(2) apply the interim measure; (3) do not run affected units unattended on hazardous duty; (4) book the remedy "
-                      "visit through Kestrel field service; (5) keep this bulletin with the site's maintenance records. Contact "
-                      "support@kestrel-pumps.example or your account manager with the serial numbers to schedule the visit. "
-                      "No charge applies to the remedy, parts or labour under recall RC-2026-03.")
-    paragraphs.append("Background: the elastomer batch and the capacitor batch were traced by lot; units outside these lots are "
-                      "not affected. Kestrel has stopped shipment of remaining stock from both lots and is inspecting inventory. "
-                      "We apologise for the disruption and will confirm each completed remedy in writing.")
+    audience = next((a for a in ("installers", "distributors", "operators") if a in text.lower()), "operators")
+    paragraphs = [f"Kestrel Pumps & Controls - Technical Safety Bulletin {bulletin_id}, issued {TODAY}. It applies to units built "
+                  f"with {' and '.join(lots) or 'the affected lots'} and supersedes any verbal guidance given by field staff."]
+    for lot, f in facts.items():
+        paragraphs.append(f"Lot {lot}. Hazard: {f.get('hazard', 'see the recall notice')} Remedy: {f.get('remedy', 'a field visit')} "
+                          f"Until the remedy is applied: {f.get('interim', 'follow the interim measure in the recall notice')}")
+    paragraphs.append("How to tell whether a unit is affected: read the serial number on the nameplate and ask Kestrel support "
+                      "for its build record; units outside these lots are not affected. The remedy, parts and labour are free "
+                      "of charge under recall RC-2026-03.")
+    paragraphs.append("Background: the elastomer batch and the capacitor batch were traced by lot. Kestrel has stopped shipping "
+                      "remaining stock from both lots, is inspecting inventory, and will confirm each completed remedy in writing. "
+                      "We apologise for the disruption.")
     body = "\n\n".join(paragraphs)
+    if limit and len(body) > limit:
+        body = "\n\n".join(paragraphs[:-1])[:limit - 1].rsplit(". ", 1)[0] + "."
+    actions = ["Identify affected serial numbers from the nameplate and the build record.",
+               "Apply the interim measure for the unit's lot today.",
+               "Do not run affected pumps unattended on hazardous duty.",
+               "Book the remedy visit with Kestrel field service.",
+               "File this bulletin with the site's maintenance records."]
     return use_tools(tool("draft_bulletin", bulletin_id=bulletin_id, title=f"{bulletin_id}: field replacement campaign RC-2026-03",
-                          audience="operators", body=body), preface="Drafting the bulletin from the recall facts.",
-                     thinking="Write the full body into the tool input; the reviewer edits the draft, not the chat.")
+                          audience=audience, lots=lots, body=body, actions=actions),
+                     preface=None if drafts else "Drafting the bulletin from the recall facts.",
+                     thinking="Write the full text into the tool input; the reviewer edits the draft, not the chat.",
+                     complexity=0.6)

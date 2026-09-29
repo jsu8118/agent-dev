@@ -6,9 +6,12 @@ What lives here and why:
   the observable fields only (reviews, CSAT, human edits, status, reply text). Solutions may grade against the
   truth at the very end through `hidden_truth_for_grading()`, whose name says what it is for;
 * labels - the observable success signals and the weak label the labs derive from them;
-* statistics - Wilson and bootstrap intervals, paired and unpaired tests, power and sample size, pass@k / pass^k,
-  Cohen's kappa, Bradley-Terry, PSI / KS drift statistics, a sequential probability ratio test. All pure Python,
-  seeded, and small enough to read: the labs teach these, so they must not hide in a library call;
+* statistics - Wilson and bootstrap intervals, the Newcombe interval for a difference of two rates, paired and
+  unpaired tests, power and sample size, multiple-comparison corrections (Bonferroni, Holm, Benjamini-Hochberg),
+  pass@k / pass^k, Cohen's kappa, Bradley-Terry, PSI (categorical and binned numeric) and KS drift statistics, a
+  sequential probability ratio test. All pure Python, seeded, and small enough to read: the labs teach these, so
+  they must not hide in a library call;
+* observable facts - the order ids a ticket's email names and a reply names (for contradiction checks);
 * printing - an aligned text table, money and percentage formatting.
 """
 
@@ -17,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import statistics
 from collections import Counter, defaultdict
 from functools import lru_cache
@@ -124,6 +128,26 @@ def handoff_language(trace: dict) -> bool:
     return "escalated your" in reply or "passed it to a colleague" in reply or "handed this to a colleague" in reply
 
 
+ORDER_ID = re.compile(r"\bSO-\d{5}\b")
+
+
+def order_ids(text: str) -> set[str]:
+    """Every order id (SO-#####) a piece of text names."""
+    return set(ORDER_ID.findall(text or ""))
+
+
+def ticket_order_ids(ticket_id: str) -> set[str]:
+    """The order ids the customer's own email names (subject + body): an observable fact, not a label."""
+    ticket = tickets()[ticket_id]
+    return order_ids(f"{ticket['subject']}\n{ticket['body']}")
+
+
+def contradicts_ticket_order(trace: dict) -> bool:
+    """The reply names an order id, the customer's email names one, and none of the reply's ids is the customer's."""
+    named, asked = order_ids(trace["reply"]), ticket_order_ids(trace["ticket_id"])
+    return bool(named and asked and not (named & asked))
+
+
 # ============================================================================================ intervals and tests
 def wilson(k: int, n: int, z: float = Z95) -> tuple[float, float]:
     """Wilson score interval for a proportion - behaves at 0% and 100%, unlike the normal approximation."""
@@ -181,6 +205,22 @@ def two_proportion_test(k1: int, n1: int, k2: int, n2: int) -> tuple[float, floa
     return (z, 2 * (1 - normal_cdf(abs(z))))
 
 
+def newcombe_diff_ci(k1: int, n1: int, k2: int, n2: int, z: float = Z95) -> tuple[float, float]:
+    """Interval for p2 - p1 (candidate minus baseline) from two Wilson intervals (Newcombe 1998, method 10).
+
+    Unlike the Wald interval it behaves at 0% and 100% and on small slices - the situation of every release gate.
+    """
+    if not n1 or not n2:
+        return (-1.0, 1.0)
+    p1, p2 = k1 / n1, k2 / n2
+    l1, u1 = wilson(k1, n1, z)
+    l2, u2 = wilson(k2, n2, z)
+    d = p2 - p1
+    lo = d - math.sqrt((p2 - l2) ** 2 + (u1 - p1) ** 2)
+    hi = d + math.sqrt((u2 - p2) ** 2 + (p1 - l1) ** 2)
+    return (max(-1.0, lo), min(1.0, hi))
+
+
 def mcnemar_exact(b: int, c: int) -> float:
     """Two-sided exact McNemar p-value from the discordant pairs (b: pass->fail, c: fail->pass)."""
     n = b + c
@@ -227,6 +267,39 @@ def paired_sample_size(p_fail_new: float, p_fix_new: float, *, alpha: float = 0.
     za, zb = z_quantile(1 - alpha / 2), z_quantile(power)
     disc, delta = p_fail_new + p_fix_new, p_fail_new - p_fix_new
     return math.ceil((za * math.sqrt(disc) + zb * math.sqrt(disc - delta ** 2)) ** 2 / delta ** 2)
+
+
+def bonferroni(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str, bool]:
+    """Reject H0 for every test with p <= alpha / m (controls the family-wise error rate)."""
+    m = len(pvalues)
+    return {k: p <= alpha / m for k, p in pvalues.items()}
+
+
+def holm(pvalues: dict[str, float], alpha: float = 0.05) -> dict[str, bool]:
+    """Holm step-down: sort p ascending, reject while p_(i) <= alpha / (m - i + 1); never less powerful than Bonferroni."""
+    m = len(pvalues)
+    out = {k: False for k in pvalues}
+    for i, (k, p) in enumerate(sorted(pvalues.items(), key=lambda kv: kv[1]), 1):
+        if p > alpha / (m - i + 1):
+            break
+        out[k] = True
+    return out
+
+
+def benjamini_hochberg(pvalues: dict[str, float], q: float = 0.10) -> dict[str, bool]:
+    """Benjamini-Hochberg step-up: reject the i smallest p-values for the largest i with p_(i) <= i q / m.
+
+    Controls the false discovery RATE (the share of flagged slices that are false alarms), not the chance of any
+    false alarm - the right trade for monitors that route slices to a human, the wrong one for a hard gate.
+    """
+    m = len(pvalues)
+    ordered = sorted(pvalues.items(), key=lambda kv: kv[1])
+    cutoff = 0
+    for i, (_, p) in enumerate(ordered, 1):
+        if p <= i * q / m:
+            cutoff = i
+    rejected = {k for k, _ in ordered[:cutoff]}
+    return {k: k in rejected for k in pvalues}
 
 
 def pass_at_k(n: int, c: int, k: int) -> float:
@@ -319,6 +392,29 @@ def shares(values: Iterable[Any]) -> dict[str, float]:
     counts = Counter(values)
     n = sum(counts.values())
     return {str(k): v / n for k, v in counts.items()} if n else {}
+
+
+def quantile_edges(reference: Sequence[float], bins: int = 10) -> list[float]:
+    """Inner cut points at the reference's quantiles (deciles by default), de-duplicated for lumpy data."""
+    xs = sorted(reference)
+    edges = sorted({percentile(xs, 100 * i / bins) for i in range(1, bins)})
+    return edges
+
+
+def binned_shares(values: Iterable[float], edges: Sequence[float]) -> dict[str, float]:
+    """Share of values per bin: bin i holds edges[i-1] < x <= edges[i] (bin 0 below the first edge)."""
+    counts: Counter = Counter()
+    n = 0
+    for x in values:
+        counts[str(sum(x > e for e in edges))] += 1
+        n += 1
+    return {k: v / n for k, v in counts.items()} if n else {}
+
+
+def psi_numeric(reference: Sequence[float], current: Sequence[float], *, bins: int = 10) -> float:
+    """PSI of a numeric feature on the reference's quantile bins (the usual way to monitor lengths, latencies)."""
+    edges = quantile_edges(reference, bins)
+    return psi(binned_shares(reference, edges), binned_shares(current, edges))
 
 
 def ks_statistic(a: Sequence[float], b: Sequence[float]) -> tuple[float, float]:

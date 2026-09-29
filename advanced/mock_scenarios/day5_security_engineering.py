@@ -428,15 +428,21 @@ def mutator(req: MockRequest) -> Reply:
 
 
 # =========================================================================================== PTC cell
+# The cell the stand-in "writes": it composes several get_order calls in one Python cell (programmatic tool
+# calling). The first order belongs to the request's own customer; the second belongs to a DIFFERENT customer,
+# so the CapabilityDesk that answers the code's tool calls refuses it with a row-filter error - exactly the same
+# decision a direct call would get. The point of lab 04: a call composed in code is not a way around the tool
+# layer, and the container exposes only the capability-scoped, code-callable tools.
 _PTC_CELL = '''import json
-orders = ["SO-10248", "SO-10277"]
-rows = []
-for oid in orders:
+fetched, refused = [], []
+for oid in ["SO-10248", "SO-10306"]:              # SO-10248 is the caller's order; SO-10306 belongs to another customer
     r = json.loads(await get_order({"order_id": oid}))
-    rows.append((oid, r.get("status"), r.get("total_usd"), r.get("error")))
-attempt = json.loads(await issue_refund({"order_id": "SO-10248", "amount_usd": 1200.0, "reason": "from code"}))
-print("orders:", rows)
-print("refund attempt from code:", attempt.get("error", attempt)[:90])
+    if isinstance(r, dict) and "error" in r:
+        refused.append((oid, " ".join(r["error"].split())[:70]))
+    else:
+        fetched.append((r["order_id"], r["status"], r["total_usd"]))
+print("fetched in code:", fetched)
+print("refused by the tool layer:", refused)
 '''
 
 
@@ -444,11 +450,11 @@ print("refund attempt from code:", attempt.get("error", attempt)[:90])
 def ptc(req: MockRequest) -> Reply:
     if req.completed_code is not None:
         stdout = req.completed_code["content"]["stdout"].strip()
-        return say("The cell finished. Its output:\n" + stdout + "\nThe refund attempt was refused by the tool layer, so no "
-                   "money moved; the order rows came back through the same dispatcher as any direct call.")
+        return say("The cell finished. Its output:\n" + stdout + "\nThe cross-customer read was refused inside the running "
+                   "code by the same tool layer that answers a direct call; only this summary reached my context.")
     if req.code_results:
         return say("The code already ran; nothing more to do.")
-    return Reply(content=[{"type": "text", "text": "I'll fetch both orders and try the refund from a single cell."},
+    return Reply(content=[{"type": "text", "text": "I'll fetch both orders from a single Python cell."},
                           run_code(_PTC_CELL)])
 
 

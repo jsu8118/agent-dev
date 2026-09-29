@@ -17,10 +17,12 @@ Run
 
 What to observe
     * The event log: run.created, run.status, then one model.response per turn with a tool.started /
-      tool.result pair per tool call, then the final run.status - ten events for a four-turn run.
-    * rebuild() returns a messages array that equals the in-memory loop's transcript byte for byte.
-    * The in-memory loop's AgentResult.messages lives only in this process; a second RunStore opened on the
-      same file sees the run, its status, its reply and its cost.
+      tool.result pair per tool call, then the final run.status - 13 events for a four-turn, three-tool run.
+    * The log's size against a snapshot of the messages array after every turn: linear against quadratic.
+    * rebuild() returns the messages array this worker held in memory, byte for byte; the first course's loop
+      holds the same conversation but not the same bytes (an explicit "is_error": false).
+    * A second RunStore opened on the same file sees the run, its status, its reply and its cost; the
+      in-memory loop's AgentResult.messages died with its process.
 """
 # test: expect=identical: True
 # test: expect=run.created
@@ -70,7 +72,13 @@ def step_run(store: RunStore, client, run, db):
     return runner, outcome
 
 
-def step_log(store: RunStore, run_id: str) -> None:
+def snapshot_points(messages: list[dict]) -> list[int]:
+    """Where a snapshotting runtime would save the whole array: after each tool round and after the final answer."""
+    return [i + 1 for i, m in enumerate(messages)
+            if (m["role"] == "user" and i > 0) or (m["role"] == "assistant" and i == len(messages) - 1)]
+
+
+def step_log(store: RunStore, run_id: str, messages: list[dict]) -> None:
     d1.print_log(store, run_id)
     events = store.events(run_id)
     print(f"\n{len(events)} events. Every model.response was written BEFORE its tool calls ran, every tool.result "
@@ -78,6 +86,14 @@ def step_log(store: RunStore, run_id: str) -> None:
     total = sum(cost_usd(e["usage"], MODEL) for e in events if e["type"] == "model.response")
     print(f"The log is also the bill: usage is stored per turn, so this run cost ${total:.4f} and you can say which "
           "turn cost what without a tracing backend.")
+    log_bytes = sum(len(json.dumps({k: v for k, v in e.items() if k not in ("seq", "type", "at")}, default=str))
+                    for e in events)
+    sizes = [len(json.dumps(messages[:n], default=str)) for n in snapshot_points(messages)]
+    print(f"\nStorage: the log holds {log_bytes:,} bytes of payload (usage and statuses included). Saving a snapshot "
+          f"of the messages array after each of the {len(sizes)} turns instead would store "
+          f"{' + '.join(f'{b:,}' for b in sizes)} = {sum(sizes):,} bytes - and the array grows every turn, so "
+          "snapshots grow with the square of the turns while the log grows linearly (exercise 3 does the 40-turn "
+          "arithmetic).")
 
 
 def first_difference(a: list[dict], b: list[dict]) -> str:
@@ -117,6 +133,11 @@ def same_conversation(a: list[dict], b: list[dict]) -> bool:
     return strip(a) == strip(b)
 
 
+def signatures(messages: list[dict]) -> list[str]:
+    return [b.get("signature", "") for m in d1.normalise(messages) if m["role"] == "assistant"
+            for b in m["content"] if b.get("type") == "thinking"]
+
+
 def step_rebuild(runner, store: RunStore, run, outcome, client, ticket: dict) -> None:
     messages, results, turns, replayed = runner.rebuild(run.id)
     print(f"rebuild() -> {len(messages)} messages, {len(results)} tool results, {turns} turns, "
@@ -138,12 +159,15 @@ def step_rebuild(runner, store: RunStore, run, outcome, client, ticket: dict) ->
     print(f"  same conversation (ignoring is_error:false and signatures)? {same_conversation(messages, result.messages)}")
     byte_same = d1.transcript_bytes(messages) == d1.transcript_bytes(result.messages)
     print(f"  byte-identical? {byte_same} - first difference: {first_difference(d1.normalise(messages), d1.normalise(result.messages))}")
+    same_sig = [a == b for a, b in zip(signatures(messages), signatures(result.messages))]
+    print(f"  thinking signature of turn 1..{len(same_sig)} equal in both runs: {same_sig}")
     print(wrap("The first course's loop sends \"is_error\": false on every tool_result; the runner omits the field "
-               "when it is false. Both are valid, but they are different bytes, so the cache prefix differs and "
-               "every thinking signature after the first tool result differs too (preserved thinking binds a block "
-               "to the exact bytes before it). A resumed run must reproduce the crashed worker's BYTES, not merely "
-               "its conversation - which is why rebuild() re-creates the tool_result blocks the way the runner "
-               "sent them and never re-serialises history."))
+               "when it is false. Both are valid requests with the same meaning, but they are different bytes: here "
+               "the two runs' thinking signatures differ from the first tool result on, because the mock binds "
+               "each thinking block to the exact JSON before it. Whether the real API normalises this particular "
+               "field is not something to rely on. A resumed run must reproduce the crashed worker's BYTES, not "
+               "merely its conversation - which is why rebuild() re-creates the tool_result blocks the way the "
+               "runner sent them and never re-serialises history (lab 02 breaks this on purpose)."))
 
 
 def step_second_process(store_path: str, run_id: str, result_messages_len: int) -> None:
@@ -177,7 +201,7 @@ def main() -> None:
     runner, outcome = step_run(store, client, run, db)
 
     step(3, "The event log")
-    step_log(store, run.id)
+    step_log(store, run.id, outcome.messages)
 
     step(4, "rebuild(): the transcript from the log vs the in-memory loop")
     step_rebuild(runner, store, run, outcome, client, ticket)
