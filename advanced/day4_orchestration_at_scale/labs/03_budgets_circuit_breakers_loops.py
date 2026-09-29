@@ -8,9 +8,9 @@ Objective
     window and from 429s.
 
 Concepts
-    swarm vs per-agent budgets (tokens, dollars, time), soft stop then hard stop, circuit breaker states
-    (closed / open / half-open), fail-fast, loop detection (identical calls, ping-pong), rate windows and
-    backpressure, 429 as a signal, stop conditions from the campaign
+    swarm vs per-agent budgets (tokens, dollars, time), soft stop then hard stop, admission control vs a
+    tripwire (overshoot), circuit breaker states (closed / open / half-open), fail-fast, loop detection
+    (identical calls, ping-pong), rate windows and backpressure, 429 as a signal, the campaign's stop conditions
 
 Run
     python advanced/day4_orchestration_at_scale/labs/03_budgets_circuit_breakers_loops.py
@@ -18,8 +18,8 @@ Run
 What to observe
     * Step 1: the "thorough" worker gets a warning as a tool error, keeps going, and is killed at the next call; the
       run is marked failed with the reason, and the desk shows how many calls it made.
-    * Step 2: dispatch stops claiming when the LEDGER says the swarm cap is reached; the coordinator's summary says
-      PAUSED and lists what is still queued.
+    * Step 2: the naive gate stops only after the cap is crossed (the unit in flight finishes); admission control
+      with a per-unit estimate stops before it, with the rest still queued.
     * Step 3: three failures open the circuit; the next units fail fast without touching the desk; after the outage
       one probe call closes it again.
     * Step 4: the looping worker gets a loop-guard error at the 3rd identical call and is stopped at the 5th.
@@ -53,10 +53,14 @@ class HardStop(BaseException):
 
 # ------------------------------------------------------------------------------ budgets
 class SwarmBudget:
-    """Dollar caps for the swarm (from LEDGER, which meters every call this process makes) and per agent."""
+    """A dollar cap for the whole swarm, read from labkit's LEDGER (which meters every call this process makes).
 
-    def __init__(self, cap_usd: float, per_agent_usd: float) -> None:
-        self.cap, self.per_agent = cap_usd, per_agent_usd
+    `exhausted()` is the naive gate - checked before claiming the next task, so the task that crosses the cap still
+    runs (the overshoot). `admits(estimate)` is admission control: a task is started only if what is spent plus
+    what it is expected to cost still fits, so the cap is a bound rather than a tripwire."""
+
+    def __init__(self, cap_usd: float) -> None:
+        self.cap = cap_usd
         self.start = LEDGER.total_cost
 
     @property
@@ -65,6 +69,9 @@ class SwarmBudget:
 
     def exhausted(self) -> bool:
         return self.spent >= self.cap
+
+    def admits(self, estimate: float) -> bool:
+        return self.spent + estimate <= self.cap
 
 
 class AgentGuard:
@@ -226,26 +233,38 @@ def main() -> None:
     print(f"  desk saw {desk.calls['find_engineer_slots']} find_engineer_slots calls from one unit that needed 1")
 
     step(2, "Swarm budget: pause dispatch when the LEDGER says the cap is reached")
-    desk = d4.RecallDesk()
-    queue = d4.WorkQueue(db)
-    budget = SwarmBudget(cap_usd=0.20, per_agent_usd=0.10)
-    for u in d4.units():
-        queue.enqueue(f"unit:{u['serial_number']}", "unit_plan", {"serials": [u["serial_number"]]},
-                      priority={"safety": 2, "production": 1, "standard": 0}[u["risk_class"]])
-    stopped = None
-    while not stopped:
-        if budget.exhausted():
-            stopped = f"swarm budget ${budget.cap:.2f} reached (${budget.spent:.4f} spent)"
-            break
-        task = queue.claim("dispatcher", lease_s=30)
-        if task is None:
-            break
-        r = d4.run_unit_worker(client, store, desk, task.payload["serials"], run_id=f"unit:budget:{task.task_id}", worker="dispatcher")
-        queue.complete(task.task_id, "dispatcher", {"plans": r.plans})
-        print(f"  {task.task_id} done - swarm spend so far ${budget.spent:.4f}")
-    print(f"  dispatch stopped: {stopped or 'queue drained'}; queue={queue.stats()}")
+    for label, gated in (("naive gate: spent < cap", False), ("admission control: spent + estimate <= cap", True)):
+        desk = d4.RecallDesk()
+        queue = d4.WorkQueue(d4.fresh_db(f"lab03_budget_{int(gated)}.db"))
+        budget = SwarmBudget(cap_usd=0.20)
+        for u in d4.units():
+            queue.enqueue(f"unit:{u['serial_number']}", "unit_plan", {"serials": [u["serial_number"]]},
+                          priority=d4.PRIORITY[u["risk_class"]])
+        costs: list[float] = []
+        stopped, done = None, 0
+        while True:
+            estimate = max(costs) if costs else 0.04          # the most expensive unit so far (a prior before the first)
+            if (budget.admits(estimate) if gated else not budget.exhausted()) is False:
+                stopped = f"next unit needs ~${estimate:.4f}, ${budget.cap - budget.spent:.4f} left" if gated else \
+                    f"${budget.spent:.4f} spent >= ${budget.cap:.2f}"
+                break
+            task = queue.claim("dispatcher", lease_s=30)
+            if task is None:
+                break
+            before = budget.spent
+            r = d4.run_unit_worker(client, store, desk, task.payload["serials"], run_id=f"unit:budget{int(gated)}:{task.task_id}",
+                                   worker="dispatcher")
+            queue.complete(task.task_id, "dispatcher", {"plans": r.plans})
+            costs.append(budget.spent - before)
+            done += 1
+        over = budget.spent - budget.cap
+        print(f"  {label:<44} {done} units done, ${budget.spent:.4f} spent "
+              f"({'over the cap by $' + format(over, '.4f') if over > 0 else 'within the cap'}); stopped: {stopped}; "
+              f"queue={queue.stats()}")
     print(wrap("Campaign rule 'model spend reaches the cap: pause and report' - the queued tasks stay queued; a human raises "
-               "the cap or trims the scope, then the same dispatcher resumes from the queue.", "  "))
+               "the cap or trims the scope, then the same dispatcher resumes from the queue. The naive gate overshoots by "
+               "up to one task per concurrent worker; admission control spends the estimate before the task starts. (The "
+               "second pass is cheaper per unit because it reads the worker prefix the first pass cached.)", "  "))
 
     step(3, "Circuit breaker on find_engineer_slots during a scheduling outage")
     outage = {"active": True}

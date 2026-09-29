@@ -15,7 +15,7 @@ from advanced.lib.durable import ApprovalRequired, Crash, DurableRunner, Outcome
 from kestrel import policy
 from kestrel.support_agent import SYSTEM_PROMPT
 from kestrel.support_tools import TOOLS, SupportDesk, ToolError
-from labkit import MODEL, runs_dir
+from labkit import LEDGER, MODEL, runs_dir
 from labkit.data import load_jsonl
 from labkit.models import fallback_kwargs
 from labkit.pricing import cost_usd
@@ -88,6 +88,29 @@ def desk_executor(desk: SupportDesk) -> Callable:
             return {"error": content} if is_error else content
 
     return execute
+
+
+def model_calls() -> int:
+    """Messages API calls made so far in this process - labkit's metering counts them in mock and live mode alike."""
+    return LEDGER.total_calls
+
+
+class RecordingClient:
+    """The client a runner uses, plus a copy of every request it sends (mock and live alike). DurableRunner only
+    calls `client.beta.messages.create`, so that is all this wrapper needs to provide."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self.requests: list[dict] = []
+        self.beta = self
+
+    @property
+    def messages(self):
+        return self
+
+    def create(self, **kwargs):
+        self.requests.append(json.loads(json.dumps(kwargs, default=str)))
+        return self._client.beta.messages.create(**kwargs)
 
 
 def api_error(exc: Exception) -> str:
@@ -168,8 +191,7 @@ def gated_executor(desk: SupportDesk, db) -> Callable:
                 found = find_refund(db, rma["rma_id"])
                 if found:
                     return eff.commit(found)
-            rma_row = {"rma_id": rma["rma_id"], "order_id": rma["order_id"]}
-            return eff.commit(approved_refund(db, rma_row, round(float(tool_input["amount_usd"]), 2),
+            return eff.commit(approved_refund(db, rma, round(float(tool_input["amount_usd"]), 2),
                                               tool_input["reason"], approved_by))
 
     return execute

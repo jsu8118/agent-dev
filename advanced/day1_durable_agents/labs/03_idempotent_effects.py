@@ -23,13 +23,14 @@ What to observe
     * Step 4: a lost response is retried with the same key and deduplicated; without a key the retry pays twice.
     * Step 5: a key the ledger has forgotten (dedup window) lets a late resume pay again; the business-key
       check catches it.
+    * Step 6: the summary matrix is computed from twelve more runs - note the effects table alone does NOT stop
+      a transport retry from paying twice.
 """
 # test: expect=credits=2
 # test: expect=credits=1
 
 from __future__ import annotations
 
-import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,12 +116,18 @@ class ARLedger:
 
 # ---------------------------------------------------------------------------- executors, from naive to robust
 def make_executor(desk: SupportDesk, ledger: ARLedger, *, mode: str, die: list[str] | None = None,
-                  transport_retries: int = 0, business_key_check: bool = False):
+                  transport_retries: int = 0, business_key_check: bool = False, verbose: bool = True,
+                  notes: dict | None = None):
     """mode: "naive" (no effects table, no key), "effect" (effects table, no key downstream),
     "keyed" (effects table + the key pushed to the ledger). `die` lists one-shot crash points:
-    "before_post" or "after_post"."""
+    "before_post" or "after_post". `notes` collects what happened ("reconcile" when a person must check)."""
     die = die or []
     reads = d1.desk_executor(desk)
+    notes = notes if notes is not None else {}
+
+    def say(text: str) -> None:
+        if verbose:
+            print(text)
 
     def crash_if(point: str) -> None:
         if die and die[0] == point:
@@ -136,7 +143,7 @@ def make_executor(desk: SupportDesk, ledger: ARLedger, *, mode: str, die: list[s
             except ConnectionError as exc:
                 if attempts > transport_retries:
                     raise
-                print(f"      transport error ({exc}); retrying with {'the same key' if key else 'NO key'}")
+                say(f"      transport error ({exc}); retrying with {'the same key' if key else 'NO key'}")
 
     def execute(name: str, tool_input: dict, ctx) -> dict:
         if name != "post_credit":
@@ -149,23 +156,24 @@ def make_executor(desk: SupportDesk, ledger: ARLedger, *, mode: str, die: list[s
             return credit
         with ctx.effect() as eff:                             # key = f"{run_id}:{tool_use_id}"
             if eff.done:
-                print("      effects table: done -> replaying the stored result")
+                say("      effects table: done -> replaying the stored result")
                 return eff.stored
             if eff.in_flight:
-                print("      effects table: in flight -> a previous attempt started and never finished")
+                say("      effects table: in flight -> a previous attempt started and never finished")
                 if mode == "effect":
+                    notes["reconcile"] = True
                     return {"error": "An earlier attempt to post this credit was interrupted and its outcome is "
                                      "unknown. Do not retry; ask finance to reconcile the ledger first."}
                 found = ledger.find(ctx.idempotency_key)
                 if found:
-                    print(f"      ledger.find({ctx.idempotency_key[-12:]!r}) -> {found['credit_id']}: reuse it")
+                    say(f"      ledger.find({ctx.idempotency_key[-12:]!r}) -> {found['credit_id']}: reuse it")
                     return eff.commit(found)
                 if business_key_check:
                     found = ledger.find_by_business_key(order_id, amount)
                     if found:
-                        print(f"      key unknown downstream (window expired) but order + amount match {found['credit_id']}: reuse it")
+                        say(f"      key unknown downstream (window expired) but order + amount match {found['credit_id']}: reuse it")
                         return eff.commit(found)
-                print("      ledger has no record of the key -> the effect never reached it: safe to post")
+                say("      ledger has no record of the key -> the effect never reached it: safe to post")
             crash_if("before_post")
             credit = post(order_id, amount, reason, ctx.idempotency_key if mode == "keyed" else None)
             crash_if("after_post")
@@ -176,35 +184,58 @@ def make_executor(desk: SupportDesk, ledger: ARLedger, *, mode: str, die: list[s
 
 def run_with(client, label: str, *, mode: str, die: list[str] | None = None, transport_retries: int = 0,
              fail_next: str | None = None, business_key_check: bool = False, ledger: ARLedger | None = None,
-             advance_days: float = 0.0, dedup_window_s: float = 1 * DAY) -> ARLedger:
+             advance_days: float = 0.0, dedup_window_s: float = 1 * DAY, verbose: bool = True) -> tuple[ARLedger, dict]:
     """One scenario: a fresh run (and ledger unless given), worker-a runs it, crashes if told to, worker-b resumes."""
     ledger = ledger or ARLedger(dedup_window_s=dedup_window_s)
     ledger.fail_next = fail_next
     store = d1.fresh_store("03_effects")
     db = memory_db()
     run = store.create("credit", input={"message": NOTE, "requester_email": CUSTOMER_EMAIL}, run_id="credit-T-1106")
-    print(f"  {label}")
+    notes: dict = {}
+    say = print if verbose else (lambda *a, **k: None)
+    say(f"  {label}")
 
     def worker(name):
         desk = SupportDesk(CUSTOMER_EMAIL, db=db, ticket_ref="T-1106")
         execute = make_executor(desk, ledger, mode=mode, die=die, transport_retries=transport_retries,
-                                business_key_check=business_key_check)
+                                business_key_check=business_key_check, verbose=verbose, notes=notes)
         return d1.support_runner(store, client, execute=execute, worker=name, system=SYSTEM, tools=[GET_ORDER, POST_CREDIT])
 
     try:
         outcome = worker("worker-a").run(run.id)
     except Crash as exc:
-        print(f"    worker-a: CRASH - {exc}")
+        say(f"    worker-a: CRASH - {exc}")
         if advance_days:
             ledger.now += advance_days * DAY
-            print(f"    ... {advance_days:g} days pass before the run is resumed (approval backlog, a redeploy queue)")
+            say(f"    ... {advance_days:g} days pass before the run is resumed (approval backlog, a redeploy queue)")
         outcome = worker("worker-b").run(run.id)
-        print(f"    worker-b: {d1.outcome_line(outcome)}")
+        say(f"    worker-b: {d1.outcome_line(outcome)}")
     else:
-        print(f"    worker-a: {d1.outcome_line(outcome)}")
-    print(f"    reply: {d1.short(outcome.reply, 110)}")
-    print(f"    ledger: {ledger.summary()}")
-    return ledger
+        say(f"    worker-a: {d1.outcome_line(outcome)}")
+    say(f"    reply: {d1.short(outcome.reply, 110)}")
+    say(f"    ledger: {ledger.summary()}")
+    return ledger, notes
+
+
+APPROACHES = [("naive (no table, no key)", dict(mode="naive")),
+              ("effects table, no key downstream", dict(mode="effect")),
+              ("effects table + key downstream", dict(mode="keyed")),
+              ("... + business-key fallback", dict(mode="keyed", business_key_check=True))]
+FAILURES = [("crash after post", dict(die=["after_post"])),
+            ("lost response + retry", dict(fail_next="lost_response", transport_retries=1)),
+            ("late resume (3 days)", dict(die=["after_post"], advance_days=3))]
+
+
+def step_matrix(client) -> None:
+    print((f"  {'approach':<34} " + " ".join(f"{name:<22}" for name, _ in FAILURES)).rstrip())
+    for approach, a_kw in APPROACHES:
+        cells = []
+        for _, f_kw in FAILURES:
+            fresh = {k: list(v) if isinstance(v, list) else v for k, v in f_kw.items()}   # `die` is consumed per run
+            ledger, notes = run_with(client, "", verbose=False, **a_kw, **fresh)
+            n = len(ledger.credits)
+            cells.append(f"{n} credit{'s' if n != 1 else ''}" + (" + reconcile" if notes.get("reconcile") else ""))
+        print((f"  {approach:<34} " + " ".join(f"{c:<22}" for c in cells)).rstrip())
 
 
 def main() -> None:
@@ -243,9 +274,10 @@ def main() -> None:
     run_with(client, "the ledger was unavailable (503) on the first call; 1 retry, keyed:", mode="keyed",
              fail_next="unavailable", transport_retries=1)
     print(wrap("Retries belong at the transport level with the SAME key, so the receiver can deduplicate; a retry "
-               "that mints a new request is a second order. Note the ordinary failure (503) on a first attempt "
-               "releases the effect claim (durable.py's _Effect.__exit__), so a business-level retry by the model "
-               "would start clean - and still carry a new key, because it would be a new tool_use."))
+               "that mints a new request is a second order. Had the retries run out, the ordinary exception would "
+               "have released the effect claim (durable.py's _Effect.__exit__) and the model would have seen a tool "
+               "error; if it then called post_credit again, that would be a new tool_use with a new key - a "
+               "business-level retry, which is the model's (and the prompt's) decision, not the transport's."))
 
     step(5, "Dedup windows: keys must outlive the longest retry horizon")
     run_with(client, "crash after post; the run is resumed 3 days later; the ledger forgets keys after 1 day:",
@@ -257,15 +289,14 @@ def main() -> None:
                "downstream window is the weak link. Prefer receivers that keep keys for as long as the business "
                "record exists, and keep a business-key check for the ones that don't."))
 
-    step(6, "Summary")
-    print("  approach                                  crash after post  lost response + retry  late resume (3 days)")
-    print("  naive (no table, no key)                  2 credits         2 credits              2 credits")
-    print("  effects table, no key downstream          1 + reconcile     n/a                    1 + reconcile")
-    print("  effects table + key downstream            1                 1                      2 (window expired)")
-    print("  ... + business-key fallback               1                 1                      1")
-    print(wrap("'Exactly-once' is not a property a network can give you; at-least-once delivery plus an idempotent "
-               "receiver is what every payment system, message broker and workflow engine actually implements. "
-               "Your part: claim locally, key the call, look the key up when in doubt, and know the window."))
+    step(6, "Summary: every approach against every failure (twelve more runs)")
+    step_matrix(client)
+    print(wrap("Read the second row twice: the effects table stops the RESUMER from posting again, but a transport "
+               "retry inside one attempt goes straight past it - only a key the ledger honours makes that retry "
+               "safe. 'Exactly-once' is not a property a network can give you; at-least-once delivery plus an "
+               "idempotent receiver is what every payment system, message broker and workflow engine actually "
+               "implements. Your part: claim locally, key the call, look the key up when in doubt, and know the "
+               "window."))
 
 
 if __name__ == "__main__":

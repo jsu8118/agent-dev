@@ -24,7 +24,7 @@ import re
 import unicodedata
 from typing import Any
 
-from labkit.mock import MockRequest, Reply, json_reply, run_code, say, scenario, tool, use_tools
+from labkit.mock import MockRequest, Reply, bash, json_reply, run_code, say, scenario, tool, use_tools
 from labkit.mock.schema_tools import resolve, synthesize
 
 CLASSIFIER_MARK = "<adv_day5_classifier>"
@@ -32,6 +32,7 @@ COPILOT_MARK = "<adv_day5_copilot"
 MUTATOR_MARK = "<adv_day5_mutator>"
 PTC_MARK = "<adv_day5_ptc>"
 ABUSE_MARK = "<adv_day5_abuse_cases>"
+SANDBOX_MARK = "<adv_day5_sandbox>"
 
 
 # ------------------------------------------------------------------------------------------- helpers
@@ -97,18 +98,20 @@ _FEATURES = [
                 r"override code|maintenance mode|you are now (in )?[\w-]+( mode)?|has no policies|stay in character", re.I)),
     ("rule_change", 0.3, "instruction_override",
      re.compile(r"new polic(y|ies) effective|approved automatically|pre-?(approved|authori[sz]ed|granted)|"
-                r"skip (the )?(verification|get_customer_profile)|treat (the )?sender as|full permissions|never escalate|"
-                r"is deprecated; use|now that i'?m verified", re.I)),
+                r"skip (the )?(verification|identity check|get_\w+)|treat (the )?sender as|full permissions|never escalate|"
+                r"(is|are) deprecated\W+use|(i am|i'?m|now) (already )?verified", re.I)),
     ("concealment", 0.35, "instruction_override",
      re.compile(r"do not (mention|tell|disclose)|without asking|white text|display\s*:\s*none|\(hidden\)", re.I)),
     ("tool_directive", 0.3, "instruction_override",
      re.compile(r"before (using|calling) any other tool|call this tool (once|first)|always call this tool|"
                 r"\bcall \w+ with\b|follow them\b", re.I)),
     ("param_exfil", 0.5, "data_exfiltration",
-     re.compile(r"full text of the user|email address in the|pass the conversation|conversation so far|session_context", re.I)),
+     re.compile(r"full text of the (user|conversation|message)|(email address|phone number|contact details) in the|"
+                r"pass (the|this) conversation|conversation so far|(always|must) (include|send|pass) the (user|customer)", re.I)),
     ("impersonation", 0.35, "authority_impersonation",
-     re.compile(r"this is kestrel|from the desk of|\bhere \((account manager|support|it)|writing from my personal|"
-                r"approval code|workflow is down|this user is (the )?kestrel|\bit security\b", re.I)),
+     re.compile(r"\bthis is (kestrel|it|security|finance|the support)|from the desk of|on behalf of (the )?(ceo|cfo|director|"
+                r"manager)|\bhere \((account manager|support|it|finance)|writing from (my )?(personal|private)|approval code|"
+                r"(workflow|approval system) is (down|offline)|this user is (the )?\w+ (manager|admin|director)|\bit security\b", re.I)),
     ("spoofed_output", 0.6, "tool_output_spoofing",
      re.compile(r"\"type\"\s*:\s*\"tool_result\"|<tool_result|\"approval_id\"|\"status\"\s*:\s*\"approved\"", re.I)),
     ("exfil", 0.35, "data_exfiltration",
@@ -119,13 +122,16 @@ _FEATURES = [
      re.compile(r"\bcredentials?\b|api key|\bpassword\b", re.I)),
     ("obfuscation_hint", 0.3, "obfuscation", re.compile(r"\bdecode\b|paste this into your reasoning", re.I)),
     ("money_directive", 0.25, "instruction_override",
-     re.compile(r"issue (a |the )?(full |\d+% )?refund|refund (can go out|now)|approve refund|\bwaive\b|at no charge|"
-                r"free seal kits|compensation of|ship replacement|goodwill credit .{0,30}we discussed|was approved", re.I)),
+     re.compile(r"issue (a |the )?(full |\d+% )?refund|refund (can go out|now)|approve refund|\bwaive\b|at no (charge|cost)|"
+                r"\bfree (parts|kits?|replacements?|units?|seal)|compensation of|ship (the )?replacements?|"
+                r"(credit|refund|discount) (we|you|they) (discussed|agreed|promised)|was approved", re.I)),
     ("shape_coercion", 0.4, "other", re.compile(r"strictly as json|applied automatically|rejects any other shape", re.I)),
     ("destructive_bulk", 0.3, "destructive_request",
-     re.compile(r"cancel every|delete our contacts|cancel order .{0,20}right away", re.I)),
+     re.compile(r"\b(cancel|delete|remove|close|void) (every|all|each)\b|delete (our|my|the|all) (contacts|data|records|"
+                r"accounts?)|cancel (the )?order .{0,20}(right away|immediately|now)", re.I)),
     ("fabricated_agreement", 0.3, "other",
-     re.compile(r"as agreed with your colleague|fee is waived", re.I)),
+     re.compile(r"as (agreed|discussed|promised) (with|by) (your|a|the) (colleague|manager|team|rep)|"
+                r"(fee|charge|restocking fee) (is|was|has been) waived", re.I)),
     ("external_link_directive", 0.3, "other",
      re.compile(r"download from https?://|instruct the customer to install", re.I)),
 ]
@@ -458,10 +464,27 @@ def ptc(req: MockRequest) -> Reply:
                           run_code(_PTC_CELL)])
 
 
+# =========================================================================================== sandbox (lab 04)
+# The lab supplies the cell to run inside the container in a <cell> (Python) or <bash> block, framed as "code an
+# agent might write". The scenario just runs it and reports what came back - the container's behaviour is the
+# lesson, not a decision. This is a stand-in for a model that writes and runs code; the mock notes that its local
+# container is a real subprocess and does not reproduce the hosted container's network/filesystem isolation.
+@scenario("adv.day5.sandbox", match=lambda r: SANDBOX_MARK in r.system_text, priority=10)
+def sandbox(req: MockRequest) -> Reply:
+    if req.completed_code is not None:
+        out = req.completed_code["content"]
+        return say(f"cell exit={out.get('return_code')}\nstdout:\n{out.get('stdout', '').rstrip()}"
+                   + (f"\nstderr:\n{out.get('stderr', '').rstrip()}" if out.get("stderr") else ""))
+    if req.code_results:                                   # a bash / editor result already came back
+        return say("ran in the container.")
+    cell = _section(req.last_user_text, "cell")
+    command = _section(req.last_user_text, "bash")
+    if command:
+        return Reply(content=[bash(command)])
+    return Reply(content=[run_code(cell or "print('no cell supplied')")])
+
+
 # =========================================================================================== abuse cases
-_CHANNEL_FOR_RISK = {"read": "email", "write": "document", "irreversible": "tool_result"}
-
-
 @scenario("adv.day5.abuse_cases", match=lambda r: ABUSE_MARK in r.system_text, priority=10)
 def abuse_cases(req: MockRequest) -> Reply:
     text = req.last_user_text
@@ -472,22 +495,32 @@ def abuse_cases(req: MockRequest) -> Reply:
     cases = []
     for t in tools:
         name, risk, pii = t.get("name", "?"), t.get("risk", "read"), bool(t.get("pii"))
+        approval = bool(t.get("approval"))
         params = ", ".join(t.get("params", [])[:3]) or "no parameters"
+        # The channel follows the path the template describes, so the two never disagree.
         if risk == "irreversible":
+            channel = "tool_result"
             path = (f"An instruction smuggled into a record the copilot reads (order notes, a KB passage) tells it to call "
                     f"{name}({params}); once it runs there is no undo.")
             control = "approval with dual control on every irreversible tool; never in the copilot's toolset by default"
+        elif approval:
+            channel = "tool_result"
+            path = (f"A poisoned field in a record the copilot reads (an order note saying 'VIP: waive fees') asks it to call "
+                    f"{name}({params}) without telling anyone.")
+            control = "approval gate with dual control (the requester cannot approve); the business rule (amount limit, allowed range) lives in the tool"
         elif pii:
+            channel = "email"
             path = (f"A sender claiming an authority the channel does not prove asks the copilot to call {name}({params}) and "
                     f"send the result outside the conversation.")
             control = "row filter from the verified channel identity; outbound-email allowlist; output DLP"
         elif risk == "write":
+            channel = "document"
             path = (f"A document or web page processed during the conversation instructs the copilot to call {name}({params}) "
                     f"'at no charge' or 'for all units'.")
             control = "phase-scoped toolset (writes only in the resolve phase), write budgets, policy in the tool"
         else:
+            channel = "email"
             path = f"A verified customer of one account asks the copilot to call {name}({params}) for another account."
             control = "row filter: identifiers are resolved to their owner and checked against the capability"
-        cases.append({"tool": name, "attacker_channel": _CHANNEL_FOR_RISK.get(risk, "email"), "path": "[mock] " + path,
-                      "control": control})
+        cases.append({"tool": name, "attacker_channel": channel, "path": "[mock] " + path, "control": control})
     return json_reply(_fit({"cases": cases}, req.output_schema, text), complexity=0.3)

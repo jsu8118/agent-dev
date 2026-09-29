@@ -322,7 +322,7 @@ def _batches(units_: list[dict], batch: str, brief: str, notice: str) -> list[di
     return out
 
 
-def _summary(plans: list[dict], stats: dict | None, queue: dict) -> str:
+def _summary(plans: list[dict], stats: dict | None, queue: dict, dead: list[dict]) -> str:
     by_status: dict[str, int] = {}
     kits: dict[str, int] = {}
     late, pending = [], []
@@ -339,8 +339,10 @@ def _summary(plans: list[dict], stats: dict | None, queue: dict) -> str:
     lines.append("SLA risks: " + (", ".join(late) if late else "none - every scheduled visit is on or before its remedy_by date") + ".")
     lines.append("Needs a human decision: " + (", ".join(pending) if pending else "nothing") + ".")
     unfinished = (queue.get("queued") or 0) + (queue.get("claimed") or 0)
-    if unfinished or queue.get("failed") or queue.get("dead"):
-        lines.append(f"Not finished: {unfinished} task(s) queued, {queue.get('failed') or queue.get('dead') or 0} failed - see the queue.")
+    if unfinished:
+        lines.append(f"Not finished: {unfinished} task(s) still queued.")
+    if dead:
+        lines.append("Dead letters for a human: " + "; ".join(f"{d.get('task_id')} ({d.get('error')})" for d in dead) + ".")
     if stats and stats.get("stopped"):
         lines.append(f"PAUSED: dispatch stopped early ({stats['stopped']}); reporting rather than continuing, per the campaign's stop conditions.")
     return "\n".join(lines)
@@ -364,7 +366,7 @@ def coordinator(req: MockRequest) -> Reply:
     plans = results.get("plans")
     if plans is None:                                       # full reports: read them and pull out the plans
         plans = [o for r in results.get("reports", []) for o in _json_objects(r) if "serial" in o]
-    return say(_summary(plans, stats, results.get("queue") or {}), complexity=0.5)
+    return say(_summary(plans, stats, results.get("queue") or {}, results.get("dead_letters") or []), complexity=0.5)
 
 
 # ============================================================================ agent-to-agent roles (lab 04)
@@ -401,7 +403,8 @@ def a2a(req: MockRequest) -> Reply:
                                "stays on hold until our investigation clears the lot; our quality lead will call you with a "
                                "date. " + INTERIM})
         if kind == "delegation":
-            return json_reply({"verdict": "stop_condition_met", "lot": payload.get("lot"),
+            lot = payload.get("lot") or (payload.get("context") or {}).get("lot")
+            return json_reply({"verdict": "stop_condition_met", "lot": lot,
                                "actions": ["pause scheduling for the lot", "open an incident file", "phone the site engineer"],
                                "customer_reply": "We have received your incident report and stopped the campaign for this "
                                                  "lot while we investigate. " + INTERIM})
@@ -466,24 +469,28 @@ def _contact_for(customer_id: str, contacts: list[dict]) -> dict:
     return c.get("primary") or {}
 
 
+UNITS_FILE = "/workspace/campaign/units.json"
+RESOURCES_FILE = "/workspace/campaign/resources.json"
+
+
 @scenario("adv.day4.hosted_investigator", match=lambda r: "<adv_day4_hosted_investigator" in r.system_text, priority=10)
 def hosted_investigator(req: MockRequest) -> Reply:
-    """A worker thread: reads the campaign file the lead shared in the workspace and assesses its batch."""
+    """A worker thread: reads the campaign file mounted in the session's workspace and assesses its batch."""
     task, index = _latest_task(req)
     targets = _serials_in(task)
-    read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == "campaign/units.json"), None)
+    read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == UNITS_FILE), None)
     if read is None:
-        return use_tools(tool("read", path="campaign/units.json"), preface="Reading the campaign file from the shared workspace.")
+        return use_tools(tool("read", path=UNITS_FILE), preface="Reading the campaign file from the workspace.")
     try:
         data = json.loads(read.result or "")
     except ValueError:
-        return say("campaign/units.json is not valid JSON; I cannot assess the units.")
+        return say(f"{UNITS_FILE} is not valid JSON; I cannot assess the units.")
     units_ = {u["serial"]: u for u in data.get("units", [])}
     rows = []
     for s in targets:
         u = units_.get(s)
         if u is None:
-            rows.append({"serial": s, "error": "not in campaign/units.json"})
+            rows.append({"serial": s, "error": f"not in {UNITS_FILE}"})
             continue
         contact = _contact_for(u["customer_id"], data.get("contacts", []))
         rows.append({"serial": s, "customer_id": u["customer_id"], "risk_class": u["risk_class"], "region": u["region"],
@@ -494,17 +501,19 @@ def hosted_investigator(req: MockRequest) -> Reply:
 
 @scenario("adv.day4.hosted_planner", match=lambda r: "<adv_day4_hosted_planner" in r.system_text, priority=10)
 def hosted_planner(req: MockRequest) -> Reply:
-    """A worker thread: allocates a kit and a slot per assessed unit from the resources snapshot in the workspace.
-    Earliest deadline first; it never reuses a slot or a kit within its own batch - and knows nothing about other
-    planner threads working from the same snapshot."""
+    """A worker thread: allocates a kit and a slot per assessed unit from a resources snapshot - the one given in the
+    task if there is one, else the file mounted in the workspace. Earliest deadline first; it never reuses a slot or
+    a kit within its own batch - and knows nothing about other planner threads working from the same snapshot."""
     task, index = _latest_task(req)
-    read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == "campaign/resources.json"), None)
-    if read is None:
-        return use_tools(tool("read", path="campaign/resources.json"), preface="Reading stock and calendars from the workspace.")
-    try:
-        res = json.loads(read.result or "")
-    except ValueError:
-        return say("campaign/resources.json is not valid JSON.")
+    res = _json_between(task, "resources")
+    if res is None:
+        read = next((c for c in reversed(_calls_since(req, index, "read")) if c.input.get("path") == RESOURCES_FILE), None)
+        if read is None:
+            return use_tools(tool("read", path=RESOURCES_FILE), preface="Reading stock and calendars from the workspace.")
+        try:
+            res = json.loads(read.result or "")
+        except ValueError:
+            return say(f"{RESOURCES_FILE} is not valid JSON.")
     assessments = _json_lines(_between(task, "assessments") or "")
     stock = {k["sku"]: dict(k["stock"]) for k in res.get("kits", [])}
     wh_for = res.get("warehouse_for_region", {})
@@ -541,11 +550,22 @@ def _qa_reply(task: str) -> Reply:
                f"not scheduled: {', '.join(unscheduled) or 'none'}.", complexity=0.3)
 
 
+def _fresh_subset(resources: dict, assessments: list[dict]) -> dict:
+    """The part of a fresh snapshot the re-plan needs: the kits and the free slots for these units only."""
+    regions = {a.get("region") for a in assessments}
+    skills = {a.get("skill") for a in assessments}
+    latest = max((a.get("remedy_by") or "" for a in assessments), default="")
+    kits = {a.get("kit_sku") for a in assessments}
+    return {"warehouse_for_region": {r: w for r, w in (resources.get("warehouse_for_region") or {}).items() if r in regions},
+            "kits": [k for k in resources.get("kits", []) if k.get("sku") in kits],
+            "free_slots": [s for s in resources.get("free_slots", []) if s["region"] in regions
+                           and skills & set(s["skills"]) and s["start"][:10] <= latest]}
+
+
 @scenario("adv.day4.hosted_lead", match=lambda r: "<adv_day4_hosted_lead" in r.system_text, priority=10)
 def hosted_lead(req: MockRequest) -> Reply:
-    """The coordinator of the hosted swarm. Data comes from the client's custom tools (the system of record), is
-    shared with the roster through files in the session workspace, and every commit goes back through a custom
-    tool the client validates."""
+    """The coordinator of the hosted swarm. The bulk data is mounted in the workspace; the lead only lists the units
+    (a custom tool), delegates, commits through a custom tool the client validates, and re-plans what is rejected."""
     task, _ = _latest_task(req)
     if task.startswith("QA:"):                                   # a copy of the coordinator (roster entry `self`)
         return _qa_reply(task)
@@ -553,29 +573,19 @@ def hosted_lead(req: MockRequest) -> Reply:
     planners = max(1, int(_attr(req.system_text, "adv_day4_hosted_lead", "planners") or 1))
     if not req.called("list_agents"):
         return use_tools(tool("list_agents"), preface="Checking the roster.")
-    if not req.called("get_campaign_data"):
-        return use_tools(tool("get_campaign_data"), tool("get_resources"),
-                         preface="Fetching the campaign data and the current stock and calendars from Kestrel's systems.")
-    data_call = req.calls("get_campaign_data")[-1]
-    data = _ok(data_call) or {}
-    resource_calls = req.calls("get_resources")
-    writes = [c.input.get("path") for c in req.calls("write")]
-    if writes.count("campaign/units.json") == 0:
-        return use_tools(tool("write", path="campaign/units.json", content=data_call.result or "{}"),
-                         tool("write", path="campaign/resources.json", content=resource_calls[0].result or "{}"),
-                         preface="Sharing the campaign data with the roster through the workspace.")
+    if not req.called("list_affected_units"):
+        return use_tools(tool("list_affected_units"), preface="Listing the affected units from Kestrel's system of record.")
+    listing = _ok(req.calls("list_affected_units")[-1]) or {}
     sends = req.calls("send_to_agent")
     investigations = [c for c in sends if c.input.get("agent") == "unit-investigator"]
     if not investigations:
         by_customer: dict[str, list[str]] = {}
-        for u in data.get("units", []):
+        for u in listing.get("units", []):
             by_customer.setdefault(u["customer_id"], []).append(u["serial"])
         groups = list(by_customer.values())
         batches = [sum(groups[i::3], []) for i in range(3)]
         return use_tools(*[tool("send_to_agent", agent="unit-investigator",
-                                message=f"Assess units {', '.join(b)} from campaign/units.json in the shared workspace. Reply "
-                                        "with one JSON line per unit: serial, customer_id, risk_class, region, remedy, "
-                                        "kit_sku, skill, contact_id, contact_by, remedy_by.")
+                                message=f"Assess units {', '.join(b)} from {UNITS_FILE}. Reply with one JSON line per unit.")
                            for b in batches if b], preface="Three investigators, one batch of customers each.")
     assessments = [line for c in investigations for line in ((_ok(c) or {}).get("reply", "")).splitlines()
                    if line.strip().startswith("{")]
@@ -583,9 +593,7 @@ def hosted_lead(req: MockRequest) -> Reply:
     if not plannings:
         chunks = [assessments[i::planners] for i in range(planners)]
         return use_tools(*[tool("send_to_agent", agent="schedule-planner",
-                                message="Assign a kit warehouse and an engineer slot to each assessed unit using "
-                                        "campaign/resources.json (the region's warehouse first; the earliest free slot "
-                                        "on or before remedy_by; one slot per unit). Reply with one JSON line per unit."
+                                message=f"Plan these units from {RESOURCES_FILE}. One JSON line per unit."
                                         "\n<assessments>\n" + "\n".join(chunk) + "\n</assessments>")
                            for chunk in chunks if chunk],
                          preface="Planning in parallel." if planners > 1 else "Handing the assessments to the planner.")
@@ -593,33 +601,31 @@ def hosted_lead(req: MockRequest) -> Reply:
     first_round = plannings[:planners]
     plans = [p for c in first_round for p in _json_lines((_ok(c) or {}).get("reply", ""))]
     if not records:
-        return use_tools(tool("record_plan", plans=plans), preface="Recording the plan in Kestrel's system of record.")
+        return use_tools(tool("record_plan", plans=plans), preface="Committing the plans to Kestrel's system of record.")
     rejected = (_ok(records[0]) or {}).get("rejected") or []
     if rejected:
         rejected_serials = {r["serial"] for r in rejected}
-        if len(resource_calls) < 2:
-            return use_tools(tool("get_resources"), preface=f"{len(rejected)} booking(s) were rejected as conflicts: "
-                                                            "refreshing the stock and calendars.")
-        if writes.count("campaign/resources.json") < 2:
-            return use_tools(tool("write", path="campaign/resources.json", content=resource_calls[-1].result or "{}"),
-                             preface="Updating the shared snapshot.")
+        redo = [json.loads(a) for a in assessments if json.loads(a).get("serial") in rejected_serials]
+        if not req.called("get_resources"):
+            return use_tools(tool("get_resources"), preface=f"{len(rejected)} plan(s) were rejected at commit: fetching a "
+                                                            "fresh snapshot of stock and calendars.")
         if len(plannings) == len(first_round):
+            fresh = _fresh_subset(_ok(req.calls("get_resources")[-1]) or {}, redo)
             thread_id = (_ok(first_round[0]) or {}).get("thread_id")
-            redo = [a for a in assessments if json.loads(a).get("serial") in rejected_serials]
             return use_tools(tool("send_to_agent", agent="schedule-planner", thread_id=thread_id,
-                                  message="Some of your bookings conflicted with another planner's. Re-plan these units "
-                                          "from the refreshed campaign/resources.json.\n<assessments>\n" + "\n".join(redo)
-                                          + "\n</assessments>"),
+                                  message="These units were rejected at commit (another planner took the same slots or "
+                                          "kits). Re-plan them from the fresh snapshot below, not from the file.\n"
+                                          "<assessments>\n" + "\n".join(json.dumps(a) for a in redo) + "\n</assessments>\n"
+                                          "<resources>\n" + json.dumps(fresh) + "\n</resources>"),
                              preface="Asking the first planner to re-plan the rejected units in its existing thread.")
         if len(records) < 2:
-            replans = _json_lines((_ok(plannings[-1]) or {}).get("reply", ""))
-            return use_tools(tool("record_plan", plans=replans), preface="Recording the re-planned units.")
+            return use_tools(tool("record_plan", plans=_json_lines((_ok(plannings[-1]) or {}).get("reply", ""))),
+                             preface="Committing the re-planned units.")
     final = {p["serial"]: p for p in plans}
     if rejected and len(plannings) > len(first_round):
         for p in _json_lines((_ok(plannings[-1]) or {}).get("reply", "")):
             final[p["serial"]] = p
-    committed = [c for c in records if _ok(c)]
-    scheduled = sum((_ok(c) or {}).get("scheduled", 0) for c in committed)
+    scheduled = sum((_ok(c) or {}).get("scheduled", 0) for c in records)
     qa_calls = [c for c in sends if c.input.get("agent") == name]
     if not qa_calls:
         return use_tools(tool("send_to_agent", agent=name, message="QA: verify these unit plans against the campaign rules."
@@ -631,6 +637,6 @@ def hosted_lead(req: MockRequest) -> Reply:
         if p.get("warehouse"):
             kits[p["warehouse"]] = kits.get(p["warehouse"], 0) + 1
     return say(f"Campaign RC-2026-03: {len(final)} unit plans, {scheduled} committed as scheduled"
-               + (f" ({len(rejected)} conflicting booking(s) re-planned after a refresh)" if rejected else "")
+               + (f" ({len(rejected)} rejected at the first commit and re-planned from a fresh snapshot)" if rejected else "")
                + ". Kits by warehouse: " + ", ".join(f"{w} {n}" for w, n in sorted(kits.items())) + f". {qa}",
                complexity=0.4)

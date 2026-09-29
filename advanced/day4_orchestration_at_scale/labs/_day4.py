@@ -799,9 +799,8 @@ def get_or_create_agent(client: Any, name: str, **config: Any) -> Any:
     configuration you want differs from the stored one. Never create a fresh agent per run."""
     for agent in client.beta.agents.list():
         if agent.name == name and not getattr(agent, "archived_at", None):
-            stored = agent.model_dump(mode="json", exclude_none=True)
             wanted = {k: v for k, v in config.items() if k in ("system", "description")}
-            if any(stored.get(k) != v for k, v in wanted.items()):
+            if any(getattr(agent, k, None) != v for k, v in wanted.items()):
                 return client.beta.agents.update(agent.id, version=agent.version, **config)
             return agent
     return client.beta.agents.create(name=name, **config)
@@ -865,20 +864,88 @@ def drive_session(client: Any, session_id: str, answer: Callable[[Any], tuple[st
     return stop
 
 
+def describe_event(ev: Any, width: int = 70) -> str:
+    """One line per session event: its type and the fields that matter for that type."""
+    def short(text: str) -> str:
+        text = " ".join(str(text).split())
+        return text if len(text) <= width else text[: width - 3] + "..."
+    kind = ev.type
+    if kind in ("user.message", "agent.message"):
+        return f"{kind:<32} {short(' '.join(getattr(b, 'text', '') for b in ev.content))}"
+    if kind == "agent.custom_tool_use":
+        thread = f" (thread {ev.session_thread_id})" if getattr(ev, "session_thread_id", None) else ""
+        return f"{kind:<32} {ev.name}({short(json.dumps(ev.input))}){thread}"
+    if kind == "user.custom_tool_result":
+        return f"{kind:<32} for {ev.custom_tool_use_id}: {short(' '.join(getattr(b, 'text', '') for b in ev.content))}"
+    if kind == "agent.tool_use":
+        return f"{kind:<32} {ev.name}({short(json.dumps(ev.input))}) permission={ev.evaluated_permission}"
+    if kind == "agent.tool_result":
+        return f"{kind:<32} {'error ' if ev.is_error else ''}{short(' '.join(getattr(b, 'text', '') for b in ev.content))}"
+    if kind in ("session.status_idle", "session.thread_status_idle"):
+        stop = ev.stop_reason
+        who = f" {ev.agent_name}" if getattr(ev, "agent_name", None) else ""
+        ids = f" event_ids={stop.event_ids}" if getattr(stop, "event_ids", None) else ""
+        return f"{kind:<32}{who} stop_reason={stop.type}{ids}"
+    if kind == "span.model_request_end":
+        u = ev.model_usage
+        return f"{kind:<32} in={u.input_tokens} cache_r={u.cache_read_input_tokens} out={u.output_tokens}"
+    if kind == "session.usage":
+        return f"{kind:<32} list_cost={ev.usage.list_cost.amount} cents"
+    if kind == "session.thread_created":
+        return f"{kind:<32} {ev.agent_name} ({ev.session_thread_id})"
+    if kind == "agent.thread_message_sent":
+        return f"{kind:<32} -> {ev.to_agent_name}: {short(' '.join(getattr(b, 'text', '') for b in ev.content))}"
+    if kind == "agent.thread_message_received":
+        return f"{kind:<32} <- {ev.from_agent_name}: {short(' '.join(getattr(b, 'text', '') for b in ev.content))}"
+    if kind in ("session.thread_status_running",):
+        return f"{kind:<32} {ev.agent_name}"
+    return kind
+
+
+def session_events(client: Any, session_id: str) -> list:
+    """Every event of a session. The session-level list is the primary thread plus a condensed view of the other
+    threads; on the platform each child thread's own events (where its model requests are) come from its thread
+    event list, merged here and de-duplicated by id. [mock] the mock puts every event on the session-level list and
+    has no per-thread event endpoint."""
+    from labkit import is_mock
+    events = list(client.beta.sessions.events.list(session_id))
+    if is_mock():
+        return events
+    seen = {e.id for e in events}
+    for thread in client.beta.sessions.threads.list(session_id):
+        if thread.parent_thread_id is None:
+            continue
+        for ev in client.beta.sessions.threads.events.list(thread.id, session_id=session_id):
+            if ev.id not in seen:
+                seen.add(ev.id)
+                events.append(ev)
+    return events
+
+
+def _usage_tokens(usage: Any) -> dict:
+    """Token totals from a session's usage object (cache writes may come as a total or as a per-TTL breakdown)."""
+    written = getattr(usage, "cache_creation_input_tokens", None)
+    if written is None and getattr(usage, "cache_creation", None) is not None:
+        breakdown = usage.cache_creation.model_dump() if hasattr(usage.cache_creation, "model_dump") else dict(usage.cache_creation)
+        written = sum(int(v or 0) for v in breakdown.values() if isinstance(v, (int, float)))
+    return {"input_tokens": int(getattr(usage, "input_tokens", 0) or 0), "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+            "cache_creation_input_tokens": int(written or 0),
+            "cache_read_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0)}
+
+
 def session_spend(client: Any, session_id: str, model: str = MODEL) -> dict:
-    """What a session consumed: summed per-request usage from span.model_request_end, the exact cost of those
-    tokens, the platform's rounded list_cost (cents), and the number of model requests."""
-    totals = {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    """What a session consumed: token totals from the session's own usage (authoritative - every thread), the exact
+    list price of those tokens, the platform's list_cost (cents, rounded; live it also counts running time), and -
+    from the span.model_request_end events of every thread - the number of model requests and the largest prompt."""
+    session = client.beta.sessions.retrieve(session_id)
+    totals = _usage_tokens(session.usage)
     requests, largest = 0, 0
-    for ev in client.beta.sessions.events.list(session_id):
+    for ev in session_events(client, session_id):
         if ev.type == "span.model_request_end":
             u = ev.model_usage.model_dump()
             requests += 1
-            for k in totals:
-                totals[k] += int(u.get(k) or 0)
             largest = max(largest, int(u.get("input_tokens") or 0) + int(u.get("cache_read_input_tokens") or 0)
                           + int(u.get("cache_creation_input_tokens") or 0))
-    session = client.beta.sessions.retrieve(session_id)
     return {"requests": requests, **totals, "cost": cost_usd(totals, model), "largest_prompt": largest,
             "list_cost_cents": int(session.usage.list_cost.amount) if session.usage and session.usage.list_cost else 0}
 

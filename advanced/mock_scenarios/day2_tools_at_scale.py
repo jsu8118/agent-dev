@@ -72,7 +72,7 @@ SERIAL = re.compile(r"\b[A-Z]{2,3}\d{1,4}-\d{4}-\d{4}\b")
 TRACKING = re.compile(r"\b[A-Z]{3}\d{10}\b")
 LOT = re.compile(r"\b[A-Z]{2}-\d{4}-[A-Z]\b")
 FAULT = re.compile(r"\b[FE]\d{2}\b")
-SKU = re.compile(r"\b(?:KP-\d{3}(?:-[A-Z])?|MS-\d{3}(?:-R)?|KC-\d(?:-[A-Z]{3})?)\b")
+SKU = re.compile(r"\b(?!FSE-)[A-Z]{2,3}-\d{1,3}(?:-[A-Z0-9]{1,3})?\b(?!-)")
 FAMILY = re.compile(r"\b(?:KC-[12]|KP-\d{3})\b(?!-)")
 WAREHOUSE = re.compile(r"\bWH-(?:EAST|WEST|EU)\b")
 REGION = re.compile(r"\b(?:US-EAST|US-WEST|EU|APAC)\b")
@@ -81,7 +81,7 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 AMOUNT = re.compile(r"\$\s?([\d,]+(?:\.\d+)?)")
 PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s?%")
 EG_PREFIX = re.compile(r"e\.g\.\s*(?:seal lot |board lot )?([A-Z]{1,5}-)(?=[0-9A-Z])")
-ANY_ID = re.compile(r"\b[A-Z]{1,5}-[0-9A-Z][0-9A-Z-]*\b|\b[A-Z]{3}\d{10}\b|\b[A-Z]{2,3}\d{1,4}-\d{4}-\d{4}\b")
+ANY_ID = re.compile(r"\b[A-Z]{1,5}-[0-9A-Z][0-9A-Z-]*\b|\b[A-Z]{3}\d{10}\b|\b[A-Z]{2,3}\d{1,4}-\d{4}-\d{4}\b|\b[FE]\d{2}\b")
 PROPER_NAME = re.compile(r"(?<![.?!]\s)(?<!^)\b[A-Z][a-z]+(?:\s+(?:&\s+)?[A-Z][a-z]+)+")
 FORMATS = {                 # argument name -> the identifier format a model recognises for it
     "serial_number": SERIAL, "tracking_number": TRACKING, "lot": LOT, "fault_code": FAULT, "sku": SKU, "family": FAMILY,
@@ -116,8 +116,10 @@ def content_words(text: str) -> list[str]:
     """The words a model would search for: no stopwords, no bare numbers, no identifiers, no multi-word names
     ("Lumen Data Centers"), deduplicated, in order."""
     out: list[str] = []
-    for w in _raw_tokens(PROPER_NAME.sub(" ", ANY_ID.sub(" ", text))):
-        if w in STOP or len(w) < 3 or w.isdigit() or w in out:
+    cleaned = PROPER_NAME.sub(" ", ANY_ID.sub(" ", text))
+    acronyms = {a.lower() for a in re.findall(r"\b[A-Z]{2,4}\b", cleaned)}      # PO, ETA, RMA: short but meaningful
+    for w in _raw_tokens(cleaned):
+        if w in STOP or (len(w) < 3 and w not in acronyms) or w.isdigit() or w in out:
             continue
         out.append(w)
     return out
@@ -238,8 +240,8 @@ def search_query(clauses: list[str], tools: list[dict], variant: str) -> str:
         per_clause = max(1, 3 // max(1, len(clauses)))
         chosen: list[str] = []
         for clause in clauses:
-            mine = [w for w in content_words(clause) if w in rarity]
-            mine.sort(key=lambda w: (rarity[w] == 0, rarity[w], mine.index(w)))
+            order = [w for w in content_words(clause) if w in rarity]
+            mine = sorted(order, key=lambda w: (rarity[w] == 0, rarity[w], order.index(w)))
             chosen += [w for w in mine[:per_clause] if w not in chosen]
         return "|".join(re.escape(_stem(w)) for w in chosen[:4]) or "tool"
     return " ".join(words)
@@ -360,27 +362,29 @@ def infer_queue(clause: str) -> str:
     return "account_management"
 
 
-def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, required: bool) -> Any:
+def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, required: bool, *, wide: bool = False) -> Any:
+    """The value a model would pass for one argument. Required arguments may come from the clause, the whole request,
+    the conversation and earlier tool results; optional ones only when the clause states them (`wide` lets the whole
+    request supply one identifier to a tool that would otherwise get none)."""
     desc = str(ps.get("description", ""))
     lower = text.lower()
+    texts = (clause, text) if (required or wide) else (clause,)
     convo = req.conversation_text if required else ""
     if isinstance(ps.get("enum"), list):                            # a closed set: the value the request names
         hit = next((o for o in ps["enum"] if _mentioned(str(o), clause)), None) or \
             next((o for o in ps["enum"] if _mentioned(str(o), text)), None)
         return hit if hit is not None or not required else ps["enum"][0]
     if prop in FORMATS:
-        found = _find(FORMATS[prop], clause, text)
+        found = _find(FORMATS[prop], *texts)
         if prop == "to_warehouse":
             found = (WAREHOUSE.findall(text)[1:2] or [None])[0]
-        if found is None and prop == "sku" and required:
-            found = from_results(req, "sku")
         if found is None and required:
             found = _find(FORMATS[prop], convo) or from_results(req, prop) or \
                 (from_results(req, "seal_lot") if prop == "lot" else None) or \
                 (from_results(req, "code") if prop == "fault_code" else None)
         return found
     if prop in ("from_date", "to_date", "date", "since", "due_date", "window_start", "window_end", "start", "end"):
-        dates = DATE.findall(clause) or DATE.findall(text)
+        dates = DATE.findall(clause) or (DATE.findall(text) if required else [])
         if prop in ("to_date", "window_end", "end"):
             return dates[1] if len(dates) > 1 else (dates[0] if dates and required else None)
         return dates[0] if dates else None
@@ -390,7 +394,7 @@ def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, requir
     if prop == "slot_start":
         return from_results(req, "slot_start") if required else None
     if prop in ("amount_usd", "threshold"):
-        m = AMOUNT.search(clause) or AMOUNT.search(text)
+        m = AMOUNT.search(clause) or (AMOUNT.search(text) if required else None)
         if m:
             return float(m.group(1).replace(",", ""))
         pct = PERCENT.search(clause)
@@ -419,14 +423,14 @@ def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, requir
     if prop in ("channel", "team"):
         m = re.search(r"\b(logistics|billing|quality|field[- ]service|support)\b", lower)
         return m.group(1).replace(" ", "-") if m else ("support" if required else None)
-    if prop == "email" or prop == "to":
-        return _find(EMAIL, clause, text) or (from_results(req, "email") if required else None)
+    if prop in ("email", "to"):
+        return _find(EMAIL, *texts) or (from_results(req, "email") if required else None)
     if prop == "customer_id":
-        return _find(re.compile(r"\bC-\d{4}\b"), clause, text) or (from_results(req, "customer_id") if required else None)
+        return _find(re.compile(r"\bC-\d{4}\b"), *texts) or (from_results(req, "customer_id") if required else None)
     if prop == "site_id":
-        return _find(re.compile(r"\bSITE-\d{4}-[A-Z]\b"), clause, text) or (from_results(req, "site_id") if required else None)
+        return _find(re.compile(r"\bSITE-\d{4}-[A-Z]\b"), *texts) or (from_results(req, "site_id") if required else None)
     if prop in ("skill", "service", "metric", "status", "field", "reason_code", "country"):
-        options = _options(desc)
+        options = _options(desc)                                   # explicit option names: the whole request counts
         hit = next((o for o in options if _mentioned(o, clause)), None) or next((o for o in options if _mentioned(o, text)), None)
         if prop == "reason_code" and hit is None:
             for words, code in ((("no", "longer"), "no_longer_needed"), (("wrong",), "wrong_item"), (("damag",), "damaged_in_transit"),
@@ -437,7 +441,7 @@ def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, requir
         if prop == "country" and hit is None:
             m = re.search(r"\bto ([A-Z]{2})\b", text)
             hit = m.group(1) if m else None
-        return hit if hit is not None else None
+        return hit
     if prop in FREE_TEXT:
         if prop == "query":
             return " ".join(content_words(clause)[:6]) or clause[:80]
@@ -451,6 +455,9 @@ def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, requir
             return (m.group(1) if m and m.lastindex else m.group(0)) if m else ("support request" if required else None)
         if not required:
             return None
+        if prop in ("reason", "justification"):
+            m = re.search(r"\bbecause ([^.;?!]+)", text)
+            return (m.group(1).strip().capitalize() if m else clause[:200])
         if prop in ("text", "body"):
             return f"Update from Kestrel support ({TODAY}): {clause[:240]}"
         if prop == "summary":
@@ -460,50 +467,76 @@ def _value(prop: str, ps: dict, req: MockRequest, text: str, clause: str, requir
         return clause[:240]
     # generic: an ID whose format the argument's own description shows, or a value from earlier results
     for prefix in EG_PREFIX.findall(desc):
-        found = _find(re.compile(rf"\b{re.escape(prefix)}[0-9A-Z][0-9A-Z-]*\b"), clause, text, convo)
+        found = _find(re.compile(rf"\b{re.escape(prefix)}[0-9A-Z][0-9A-Z-]*\b"), *texts, convo)
         if found:
             return found
     return from_results(req, prop) if required else None
 
 
+def _is_identifier(prop: str, ps: dict) -> bool:
+    return prop in FORMATS or prop.endswith("_id") or bool(EG_PREFIX.search(str(ps.get("description", ""))))
+
+
+def _coerce(value: Any, kind: str) -> Any:
+    try:
+        if kind == "integer" and not isinstance(value, int):
+            return int(float(value))
+        if kind == "number" and not isinstance(value, (int, float)):
+            return float(value)
+        if kind == "array" and not isinstance(value, list):
+            return [value]
+        if kind == "string" and not isinstance(value, str):
+            return str(value)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
 def fill_args(t: dict, req: MockRequest, text: str, clause: str) -> dict | None:
     """Fill a tool's arguments from the request; None when a required argument is not available (yet)."""
     schema = t.get("input_schema") or {}
+    props = {k: (v if isinstance(v, dict) else {}) for k, v in (schema.get("properties") or {}).items()}
     required = set(schema.get("required") or [])
     args: dict[str, Any] = {}
-    for prop, ps in (schema.get("properties") or {}).items():
-        ps = ps if isinstance(ps, dict) else {}
+    for prop, ps in props.items():
         value = _value(prop, ps, req, text, clause, prop in required)
-        kind = ps.get("type", "string")
-        if value is not None:
-            try:
-                if kind == "integer" and not isinstance(value, int):
-                    value = int(float(value))
-                elif kind == "number" and not isinstance(value, (int, float)):
-                    value = float(value)
-                elif kind == "array" and not isinstance(value, list):
-                    value = [value]
-                elif kind == "string" and not isinstance(value, str):
-                    value = str(value)
-            except (TypeError, ValueError):
-                value = None
+        value = _coerce(value, ps.get("type", "string")) if value is not None else None
         if value is None:
             if prop in required:
                 return None
             continue
         args[prop] = value
+    if not any(_is_identifier(p, props[p]) for p in args):
+        for prop, ps in props.items():                   # e.g. check_warranty(serial_number) for "is the unit covered?"
+            if prop not in args and _is_identifier(prop, ps):
+                value = _value(prop, ps, req, text, clause, False, wide=True)
+                if value is not None:
+                    args[prop] = _coerce(value, ps.get("type", "string"))
+                    break
     return args
 
 
 # ------------------------------------------------------------------------------------------ answers
-def _fact(v: Any) -> str:
-    if isinstance(v, dict):
-        return ", ".join(f"{a}={b}" for a, b in v.items() if isinstance(b, (str, int, float)))[:110]
-    return str(v)
+def _short(v: Any, n: int = 150) -> str:
+    text = ", ".join(f"{a}={b}" for a, b in v.items() if isinstance(b, (str, int, float))) if isinstance(v, dict) else str(v)
+    return text if len(text) <= n else text[: n - 3] + "..."
 
 
-def describe_result(c: ToolCall) -> str:
-    args = ", ".join(f"{k}={v}" for k, v in list(c.input.items())[:2])
+def _asked(key: str, wanted: set[str]) -> bool:
+    """Does a result field answer something the question asked ('roles' -> role, 'emails' -> email)?"""
+    return any(min(4, len(p), len(w)) >= 3 and p[:min(4, len(p), len(w))] == w[:min(4, len(p), len(w))]
+               for p in map(_stem, key.split("_")) for w in wanted)
+
+
+def _item(item: dict, wanted: set[str]) -> str:
+    """One list item: its first identifier plus the fields the question asked about (a model reads the question)."""
+    scalars = [(k, v) for k, v in item.items() if isinstance(v, (str, int, float))]
+    keep = scalars[:1] + [(k, v) for k, v in scalars[1:] if _asked(k, wanted)][:2]
+    return " ".join(str(v) for _, v in keep)
+
+
+def describe_result(c: ToolCall, question: str = "") -> str:
+    args = ", ".join(f"{k}={v}" for k, v in c.input.items() if k not in FREE_TEXT)
     data = c.result_json()
     if c.is_error:
         err = (data or {}).get("error") if isinstance(data, dict) else None
@@ -511,24 +544,28 @@ def describe_result(c: ToolCall) -> str:
         return f"- {c.name}({args}) failed: {msg}"
     if not isinstance(data, dict):
         return f"- {c.name}({args}): {(c.result or '')[:160]}"
+    wanted = {_stem(w) for w in _raw_tokens(question) if len(w) > 3}
+    asked = sorted(data, key=lambda k: not _asked(k, wanted))                           # what the question asked first
     facts = []
-    for k, v in data.items():
-        if isinstance(v, (str, int, float, bool)) and v not in ("", None) and k not in c.input:
-            facts.append(f"{k} {v}")
-        elif isinstance(v, list) and v and isinstance(v[0], dict) and len(v) <= 12 and len(facts) == 0:
-            items = ["/".join(str(x) for x in list(item.values())[:3] if isinstance(x, (str, int, float))) for item in v]
-            facts.append(f"{len(v)} {k}: " + "; ".join(items))
+    for k in asked:
+        v = data[k]
+        if k in c.input and not isinstance(v, (list, dict)):
+            continue
+        if isinstance(v, (str, int, float, bool)) and v not in ("", None):
+            facts.append(f"{k} {_short(v)}")
+        elif isinstance(v, list) and v and isinstance(v[0], dict) and len(v) <= 12:
+            facts.append(f"{len(v)} {k}: " + "; ".join(_item(item, wanted) for item in v))
         elif isinstance(v, list) and v:
-            facts.append(f"{len(v)} {k} (first: {_fact(v[0])})" if isinstance(v[0], dict) else f"{k} {', '.join(map(str, v[:4]))}")
+            facts.append(f"{len(v)} {k} (first: {_short(v[0], 110)})" if isinstance(v[0], dict) else f"{k} {', '.join(map(str, v[:4]))}")
         elif isinstance(v, dict) and v:
-            facts.append(f"{k}: {_fact(v)}")
+            facts.append(f"{k}: {_short(v)}")
         if len(facts) >= 5:
             break
     return f"- {c.name}({args}): " + "; ".join(facts)
 
 
-def compose(calls: list[ToolCall], unmet: list[str]) -> str:
-    lines = [describe_result(c) for c in calls if c.name != "escalate_to_human"]
+def compose(calls: list[ToolCall], unmet: list[str], unchecked: list[str] | None = None, question: str = "") -> str:
+    lines = [describe_result(c, question) for c in calls if c.name != "escalate_to_human"]
     esc = [c for c in calls if c.name == "escalate_to_human" and not c.is_error]
     if esc:
         d = esc[-1].result_json() or {}
@@ -536,6 +573,8 @@ def compose(calls: list[ToolCall], unmet: list[str]) -> str:
                      f"{d.get('queue')} queue as {d.get('escalation_id')} ({d.get('priority')}, {d.get('sla')}).")
     elif unmet:
         lines.append(f"- I could not do this with the tools available to me: {'; '.join(unmet)}.")
+    if unchecked:
+        lines.append(f"- I had no tool to check: {'; '.join(unchecked)}.")
     return "Here is what I found:\n" + "\n".join(lines) if lines else "I did not need any tool for that."
 
 
@@ -556,12 +595,18 @@ def _recover(req: MockRequest, calls: list[ToolCall], text: str) -> Reply | None
     return None
 
 
+def _same_call(c: ToolCall, name: str, args: dict) -> bool:
+    """Already done in this request: same tool, same identifying arguments (free-text arguments may differ)."""
+    return c.name == name and all(c.input.get(k) == v for k, v in args.items() if k not in FREE_TEXT)
+
+
 def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False) -> Reply:
     """One tool per clause of the latest request, chosen among the tools the model can see.
 
     Search when nothing visible covers a clause (and a search tool is declared); call covering tools whose arguments
     are available; wait for a result when a later clause needs one; escalate (or admit) what nothing covers; answer
-    when nothing is pending."""
+    when nothing is pending. Statements ('the carrier has not scanned it since Friday') are context: they add a call
+    only when no other chosen tool covers them, and are never escalated on their own."""
     text, q_idx = segment(req)
     calls, searches, _ = since(req, q_idx)
     everything = custom_tools(req)
@@ -583,6 +628,8 @@ def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False)
         query = terms + [_stem(w) for w in id_words(clause, everything) if _stem(w) not in terms]
         ranked = [r[1] for r in rank(query, visible, question=is_question(clause))
                   if single or coverage(terms, by_name[r[1]]) >= COVER_MIN]
+        named = [n for n in by_name if re.search(rf"\b{re.escape(n)}\b", clause)]    # "use get_shipment ...": do as told
+        ranked = named + [n for n in ranked if n not in named]
         chosen, args = None, None
         for name in ranked[:3]:                              # the best covering tool whose arguments are available
             args = fill_args(by_name[name], req, text, clause)
@@ -593,15 +640,21 @@ def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False)
         if single and chosen:
             break
 
+    # statements are context: drop them when a tool chosen for another clause (or already called) covers them
+    acting = {d[2] for d in decisions if d[2] and not is_statement(d[0])} | {c.name for c in calls}
+    decisions = [d for d in decisions if not (is_statement(d[0]) and any(
+        n in by_name and coverage(terms_of(d[0]), by_name[n]) >= COVER_MIN for n in acting if n != d[2]))]
+
     pending: list[dict] = []
     for clause, ranked, chosen, args in decisions:
         if chosen is None or any(p["name"] == chosen for p in pending):
             continue
-        if any(c.name == chosen and all(c.input.get(k) == v for k, v in args.items()) for c in calls):
+        if any(_same_call(c, chosen, args) for c in calls):
             continue                                         # done already
         pending.append(tool(chosen, **args))
     to_search: list[str] = []
     unmet: list[str] = []
+    unchecked: list[str] = []
     for clause, ranked, chosen, args in decisions:
         if chosen is not None:
             continue
@@ -609,16 +662,17 @@ def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False)
             continue                                         # covered, but it needs a result that has not arrived yet
         if search_tool and not just_searched and not single:
             to_search.append(clause)
-        elif not is_statement(clause):
-            unmet.append(clause)
+        else:
+            (unchecked if is_statement(clause) else unmet).append(clause)
 
     if to_search:
         query = search_query(to_search, everything, variant)
         if query not in searched:
-            limit = 5 if len(to_search) == 1 else 10
-            return Reply(content=[search_tools(query, limit=limit if limit != 5 else None)],
+            limit = None if len(to_search) == 1 else min(8, 3 * len(to_search))
+            return Reply(content=[search_tools(query, limit=limit)],
                          thinking_summary=f"No visible tool covers '{to_search[0][:50]}'; search the catalog.")
-        unmet += [c for c in to_search if not is_statement(c)]   # searched with these words already
+        for clause in to_search:                             # searched with these words already: nothing more to find
+            (unchecked if is_statement(clause) else unmet).append(clause)
     if pending:
         if not parallel_ok:
             pending = pending[:1]
@@ -627,9 +681,12 @@ def plan(req: MockRequest, *, escalate_unmet: bool = True, single: bool = False)
     if unmet and escalate_unmet and "escalate_to_human" in by_name and not any(c.name == "escalate_to_human" for c in calls):
         summary = f"Needs a person: {'; '.join(unmet)[:300]}"
         priority = "P1" if any(w in text.lower() for w in SAFETY_WORDS) else "P3"
-        return use_tools(tool("escalate_to_human", queue=infer_queue(" ".join(unmet)), priority=priority, summary=summary),
+        queue = infer_queue(" ".join(unmet))
+        if queue == "account_management":                   # the clause alone names no domain: read the whole request
+            queue = infer_queue(text)
+        return use_tools(tool("escalate_to_human", queue=queue, priority=priority, summary=summary),
                          thinking="No tool I can see covers part of the request: hand it to the right queue.")
-    return say(compose(calls, unmet), complexity=0.45, thinking="Compose the answer from the tool results only.")
+    return say(compose(calls, unmet, unchecked, text), complexity=0.45, thinking="Compose the answer from the tool results only.")
 
 
 # ------------------------------------------------------------------------------------------ scenarios
@@ -669,8 +726,9 @@ def phased_agent(req: MockRequest) -> Reply:
 @scenario("adv.day2.selection", match=lambda r: MARK_SELECT in r.system_text, priority=10)
 def selection(req: MockRequest) -> Reply:
     if req.is_tool_result_turn:
-        calls, _, _ = since(req, segment(req)[1])
-        return say(compose(calls, []), complexity=0.3)
+        text, q_idx = segment(req)
+        calls, _, _ = since(req, q_idx)
+        return say(compose(calls, [], [], text), complexity=0.3)
     return plan(req, escalate_unmet=False, single=True)
 
 
@@ -805,7 +863,7 @@ def recall_triage(req: MockRequest) -> Reply:
         if kits_turn:
             return Reply(content=[run_code(KITS_CELL.format(kits=json.dumps(kit_for), warehouses=json.dumps(warehouse_for)))],
                          thinking_summary="The unit table is still in the container; count kits there and check stock.")
-        return Reply(content=[run_code(TRIAGE_CELL.format(units=json.dumps(units, indent=1), threshold=threshold, faults=limit))],
+        return Reply(content=[run_code(TRIAGE_CELL.format(units=json.dumps(units), threshold=threshold, faults=limit))],
                      thinking_summary="Fan the look-ups out in code; only the triage table needs to come back.")
 
     # direct tool use: every result comes back into the context

@@ -21,7 +21,9 @@ What to observe
     * Step 3: the replay re-runs reads (no drift) and stubs the writes; the escalation is not created again.
     * Step 4: the fork with refund_due_usd = 2,400 continues from the patched result and issues the refund - the
       latent bug, reproduced in a sandbox, without touching the original run.
-    * Step 5: the span tree with one llm.call per turn and one tool.* span per call, cost per turn included.
+    * Step 5: the span tree with one llm.call per turn and one tool.* span per call, cost per turn included,
+      timed from the events' timestamps (so a crashed worker's spans still exist).
+    * Step 6: the requester's email and name masked for export; the thinking signature kept verbatim.
 """
 # test: expect=model calls made: 0
 # test: expect=fork
@@ -39,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from advanced.lib.durable import RunStore
 from kestrel.support_tools import SupportDesk
-from labkit import MODEL, get_client, header, is_mock, mock_api, step, wrap
+from labkit import MODEL, REPO_ROOT, get_client, header, is_mock, runs_dir, step, wrap
 from labkit.data import memory_db
 from labkit.tracing import Tracer
 
@@ -63,16 +65,20 @@ def run_original(store, client, ticket, db):
 def step_investigate(store, client, run, ticket):
     print("Bug report from the support manager: \"the copilot tried to push a $9,188.50 refund the customer "
           "explicitly asked us to confirm first\".")
-    before = len(mock_api().request_log)
+    before = d1.model_calls()
     runner = d1.support_runner(store, client, execute=lambda *a: {"error": "offline"}, worker="investigator")
     messages, results, turns, replayed = runner.rebuild(run.id)
     print(f"\nrebuild(): {len(messages)} messages, {turns} turns, {replayed} tool results - model calls made: "
-          f"{len(mock_api().request_log) - before}")
+          f"{d1.model_calls() - before}")
     d1.print_transcript(messages)
     attempts = [e for e in store.events(run.id, types=("tool.started",)) if e["name"] == "issue_refund"]
+    if not attempts:
+        print("\nEvidence: the model never called issue_refund in this run - it did what the customer asked. The "
+              "log shows that as plainly as it would show the bug.")
+        return
     response = next(e for e in store.events(run.id, types=("model.response",))
                     if any(b.get("type") == "tool_use" and b["name"] == "issue_refund" for b in e["content"]))
-    ask = next(s for s in ticket["body"].split(".") if "confirm" in s).strip()
+    ask = re.search(r"[^.]*confirm the figure[^.]*", ticket["body"]).group(0).strip()
     print(f"\nEvidence: at turn {response['turn']} the model called issue_refund with {attempts[0]['input']}")
     print(f"          the ticket says: \"{ask}.\"")
     result = next(e for e in store.events(run.id, types=("tool.result",)) if e["name"] == "issue_refund")
@@ -127,7 +133,10 @@ def fork_run(store: RunStore, source_id: str, fork_id: str, *, at_seq: int, patc
 
 
 def step_fork(store, client, run, ticket):
-    rma_result = next(e for e in store.events(run.id, types=("tool.result",)) if e["name"] == "get_rma")
+    rma_result = next((e for e in store.events(run.id, types=("tool.result",)) if e["name"] == "get_rma"), None)
+    if rma_result is None:
+        print("the run never read the RMA, so there is no result to patch (live: the model took a different path)")
+        return
     new_due = 2400.0
 
     def patch(payload: dict) -> dict:
@@ -158,41 +167,47 @@ def step_fork(store, client, run, ticket):
 
 
 def log_to_trace(store: RunStore, run_id: str, model: str = MODEL) -> Tracer:
-    """Map the event log to spans: run -> llm.call per turn -> tool.<name> per call, with OTel GenAI attributes."""
+    """Map the event log to spans: run -> llm.call per turn -> tool.<name> per call, with OTel GenAI attributes.
+
+    Span times come from the events' timestamps. They are set after each `with` block, because Tracer.span stamps
+    `end` with the current time when the block exits - that would measure the export, not the run."""
     ts = lambda e: dt.datetime.fromisoformat(e["at"]).timestamp()
     events = store.events(run_id)
     tracer = Tracer("durable-support", trace_id=run_id.replace("-", "")[:16].ljust(16, "0"))
+    timed: list[tuple] = []
     with tracer.span("agent.run", **{"run.id": run_id, "run.kind": store.get(run_id).kind}) as root:
-        root.start = ts(events[0])
-        turn_span = None
         for i, e in enumerate(events):
-            end = ts(events[i + 1]) if i + 1 < len(events) else ts(e)
             if e["type"] == "model.response":
                 with tracer.span("llm.call", turn=e["turn"]) as s:
                     s.record_llm({"model": model, "id": "", "stop_reason": e["stop_reason"], "usage": e["usage"]})
-                    s.start, s.end = ts(events[i - 1]), ts(e)
-                turn_span = s
+                timed.append((s, ts(events[i - 1]), ts(e)))
             elif e["type"] == "tool.started":
+                result = next((r for r in events[i + 1:] if r["type"] == "tool.result"
+                               and r["tool_use_id"] == e["tool_use_id"]), None)
                 with tracer.span(f"tool.{e['name']}", **{"tool.input": d1.short(e["input"], 80),
                                                         "tool.use_id": e["tool_use_id"]}) as s:
-                    result = next((r for r in events[i + 1:] if r["type"] == "tool.result"
-                                   and r["tool_use_id"] == e["tool_use_id"]), None)
                     if result and result.get("is_error"):
                         s.error(d1.short(result["content"], 80))
-                    s.start, s.end = ts(e), ts(result) if result else end
+                timed.append((s, ts(e), ts(result) if result else ts(e)))
             elif e["type"] == "approval.requested":
+                decided = next((r for r in events[i + 1:] if r["type"] == "approval.decided"), None)
                 with tracer.span("approval.wait", **{"approval.summary": e["action"].get("summary", "")}) as s:
-                    s.start, s.end = ts(e), end
-        root.end = ts(events[-1])
+                    pass
+                timed.append((s, ts(e), ts(decided) if decided else ts(e)))
+    timed.append((root, ts(events[0]), ts(events[-1])))
+    for span, start, end in timed:
+        span.start, span.end = start, end
     return tracer
 
 
 def step_trace(store, run):
     tracer = log_to_trace(store, run.id)
     print(tracer.render_tree())
-    path = tracer.export()
-    print(f"\nexported {len(tracer.spans)} spans to {path.relative_to(path.parents[2])}")
-    print("  log field                     span attribute (OTel GenAI semantic conventions)")
+    print("  (in= is usage.input_tokens, the uncached part; the cache reads and writes are on each span as "
+          "gen_ai.usage.cache_*. Durations are wall-clock and differ on every run.)")
+    path = tracer.export(runs_dir("advanced", "day1") / f"trace-{run.id}.jsonl")
+    print(f"\nexported {len(tracer.spans)} spans to {path.relative_to(REPO_ROOT)}")
+    print("  log field                     span attribute (labkit.tracing's gen_ai.* names, OpenTelemetry-style)")
     print("  model.response.usage.*        gen_ai.usage.input_tokens / output_tokens / cache_*")
     print("  model.response.stop_reason    gen_ai.response.finish_reason")
     print("  tool.started.name / input     span name tool.<name>, tool.input (truncated, redacted)")
@@ -204,16 +219,23 @@ def step_trace(store, run):
                "time between events, not only the time inside them."))
 
 
-def redact(event: dict) -> dict:
-    """Mask email addresses in anything a log consumer might see; keep signatures (needed to resume) verbatim."""
-    text = json.dumps(event, default=str)
-    return json.loads(EMAIL_RE.sub("<email>", text))
+def redact(event: dict, names: list[str]) -> dict:
+    """Mask email addresses and known contact names in anything a log consumer might see. Signatures stay
+    verbatim (a resuming worker needs them); this runs at the export boundary, not on the log itself."""
+    text = EMAIL_RE.sub("<email>", json.dumps(event, default=str))
+    for name in names:
+        text = text.replace(name, "<name>")
+    return json.loads(text)
 
 
-def step_what_to_log(store, run):
+def step_what_to_log(store, run, db):
+    names = [r[0] for r in db.execute("SELECT contact_name FROM customers")]
     created = store.events(run.id, types=("run.created",))[0]
-    print("run.created as logged :", d1.short(created["input"], 110))
-    print("run.created redacted  :", d1.short(redact(created)["input"], 110))
+    signed_off = created["input"]["message"].strip().splitlines()[-1]
+    masked = redact(created, names)["input"]
+    print(f"run.created as logged : requester_email={created['input']['requester_email']!r}  last line={signed_off!r}")
+    print(f"run.created redacted  : requester_email={masked['requester_email']!r}  "
+          f"last line={masked['message'].strip().splitlines()[-1]!r}")
     thinking = next(b for e in store.events(run.id, types=("model.response",)) for b in e["content"] if b["type"] == "thinking")
     print(f"a thinking block in the log: text={thinking['thinking']!r} signature={thinking['signature'][:28]}...")
     per_turn = [(e["turn"], e["usage"]["input_tokens"] + e["usage"]["cache_read_input_tokens"]
@@ -259,7 +281,7 @@ def main() -> None:
     step_trace(store, run)
 
     step(6, "What to log")
-    step_what_to_log(store, run)
+    step_what_to_log(store, run, db)
 
 
 if __name__ == "__main__":

@@ -34,7 +34,6 @@ from labkit.mock.tokens import block_tokens
 FIELD = "<adv_day3_field_agent>"
 PROBE_PREFIX = "Quick check from today's session:"
 WRAPPERS = ("<conversation_summary>", "<scratchpad>", "<memory", "<system-reminder>", "<site_summary")
-SUMMARY_SOURCES = ("conversation summary", "scratchpad", "memory")
 
 SITE_NAMES = {"gbwd": ("granite bay", "gbwd"), "harbor": ("harbor foods", "harbor"), "riverbend": ("riverbend",),
               "cedar": ("cedar creek", "cedar"), "cobalt": ("cobalt",), "westfield": ("westfield",)}
@@ -333,7 +332,19 @@ def _arrival_answer(brief: dict, log: str, escalate_hint: bool) -> str:
 
 
 # ============================================================================================ context search
-_SPLIT_USER = re.compile(r"\n|\s+\|\s+|(?<=\));\s+|(?<=[.;?])\s+(?=[A-Z0-9(\[])")
+_SPLIT_TEXT = re.compile(r"\n|\s+\|\s+|(?<=\));\s+(?=[a-z_]+\()|(?<=[.;?])\s+(?=[A-Z0-9(\[])")
+
+
+def _wrapper_lines(req: MockRequest) -> list[str]:
+    """Whole lines of the summaries, scratchpads and memory notes in user turns - the records a parser reads (the
+    quoting units in _context_lines are sentences)."""
+    out: list[str] = []
+    for m in req.messages:
+        if m.get("role") == "user":
+            for t in _text_blocks(m):
+                if _is_wrapper(t):
+                    out += [line.strip() for line in t.split("\n") if line.strip()]
+    return out
 
 
 def _context_lines(req: MockRequest, *, skip_current: bool = True) -> list[tuple[str, str, int]]:
@@ -365,11 +376,27 @@ def _context_lines(req: MockRequest, *, skip_current: bool = True) -> list[tuple
                     out.append(("tool result", ln.strip(), pos))
             elif kind == "document":
                 source = b.get("source") or {}
+                title = b.get("title") or ""
                 for ln in str(source.get("data", "")).splitlines():
                     pos += 1
-                    out.append(("document", ln.strip(), pos))
+                    out.append(("document", f"({title}) {ln.strip()}" if title and ln.strip() else ln.strip(), pos))
             elif kind == "text" and m.get("role") in ("user", "assistant"):
                 text = b.get("text", "")
+                summary = re.match(r"\s*<site_summary site=\"(\w+)\">\s*(\{.*\})\s*</site_summary>", text, re.S)
+                if summary:
+                    try:
+                        data = json.loads(summary.group(2))
+                    except ValueError:
+                        data = {}
+                    for key, value in data.items():
+                        if key == "site":                      # already the line prefix
+                            continue
+                        for item in value if isinstance(value, list) else [value]:
+                            if isinstance(item, dict):
+                                item = ", ".join(f"{k} {v}" for k, v in item.items())
+                            pos += 1
+                            out.append(("site summary", f"({summary.group(1)}) {key.replace('_', ' ')}: {item}", pos))
+                    continue
                 if m.get("role") == "user":
                     if i == current and not _is_wrapper(text):
                         continue
@@ -378,7 +405,7 @@ def _context_lines(req: MockRequest, *, skip_current: bool = True) -> list[tuple
                               else "site summary" if "<site_summary" in text else "the technician's words")
                 else:
                     source = "my own earlier reply"
-                for ln in _SPLIT_USER.split(text):
+                for ln in _SPLIT_TEXT.split(text):
                     pos += 1
                     out.append((source, ln.strip(), pos))
     return out
@@ -415,7 +442,7 @@ def _best_line(req: MockRequest, question: str) -> tuple[str, str] | None:
             score -= 1.0                                   # facts worth checking carry a number or a code
         if wants_record and re.match(r"\d{4}-\d\d-\d\d[ T]\d\d:\d\d", line):
             score += 1.0                                   # "what was logged" is answered by a log entry
-        if score < 2.5:
+        if score < 3.0:
             continue
         key = (score, pos if prefer_recent else -pos)
         if best is None or key > (best[0], best[1]):
@@ -449,9 +476,7 @@ def _findings_in_context(req: MockRequest) -> list[dict]:
         rec = (c.result_json() or {}).get("recorded") or dict(c.input)
         add(rec.get("site_id", "?"), rec.get("unit_id", "?"), rec.get("finding", ""), rec.get("action", ""),
             rec.get("parts") or [])
-    for source, line, _ in _context_lines(req, skip_current=False):
-        if source not in SUMMARY_SOURCES:
-            continue
+    for line in _wrapper_lines(req):
         m = _FINDING_LINE.match(line)
         if m:
             add(m.group(1).lower(), m.group(2), m.group(3), m.group(4), (m.group(5) or "").replace("none", "").split(","))
@@ -462,19 +487,17 @@ def _findings_in_context(req: MockRequest) -> list[dict]:
 
 
 def _sites_in_context(req: MockRequest) -> list[str]:
-    visited: list[str] = []
-    for c in req.calls("get_site_brief"):
-        if c.input.get("site_id") and c.input["site_id"] not in visited:
-            visited.append(c.input["site_id"])
-    for source, line, _ in _context_lines(req, skip_current=False):
-        if source not in SUMMARY_SOURCES:
-            continue
-        for m in re.finditer(r"get_site_brief\(site_id=(\w+)\)|\bsite[s]?(?: visited so far)?:?\s+([a-z, ]+)", line):
-            for site in re.findall(r"[a-z]+", (m.group(1) or m.group(2) or "")):
-                if site in SITE_NAMES and site not in visited:
-                    visited.append(site)
+    """Sites the model can still tell were visited: its get_site_brief calls, the sites of the findings it can see,
+    and the sites a summary or scratchpad names."""
+    visited = [c.input.get("site_id") for c in req.calls("get_site_brief")]
+    visited += [f["site"] for f in _findings_in_context(req)]
+    for line in _wrapper_lines(req):
+        visited += re.findall(r"get_site_brief\(site_id=(\w+)\)", line)
+        mm = re.match(r"(?:sites visited so far:|site)\s+([a-z, ]+?)(?:\s*\(current|:|\.|$)", line, re.I)
+        if mm:
+            visited += re.findall(r"[a-z]+", mm.group(1).lower())
     order = list(SITE_NAMES)
-    return sorted(visited, key=order.index)
+    return sorted({v for v in visited if v in SITE_NAMES}, key=order.index)
 
 
 def _remember_notes(req: MockRequest) -> list[tuple[str, str]]:
@@ -544,7 +567,9 @@ def _wants(instructions: str, kind: str) -> bool:
     if kind == "log_notes":
         return bool(re.search(r"open item|log note|parts on site|safety note", low))
     if kind == "fault_events":
-        return bool(re.search(r"fault|event|reading|measure", low))
+        return bool(re.search(r"\bfault (?:code|event|entr)", low))
+    if kind == "operator_notes":
+        return bool(re.search(r"operator|shift-log note|oper note", low))
     return False
 
 
@@ -562,11 +587,10 @@ def _cited_replies(req: MockRequest, *, window_only: bool = False) -> list[tuple
         for t in _text_blocks(m):
             if CITATION.search(t) and re.search(r"\d", CITATION.sub("", t)):
                 out.append((site or "?", " ".join(t.split())))
-    for source, line, _ in _context_lines(req, skip_current=False):
-        if source in SUMMARY_SOURCES and not window_only:
-            mm = re.match(r"fact(?: \((\w+)\))?:\s*(.+)$", line, re.I)
-            if mm:
-                out.append(((mm.group(1) or "?").lower(), mm.group(2)))
+    for line in ([] if window_only else _wrapper_lines(req)):
+        mm = re.match(r"fact(?: \((\w+)\))?:\s*(.+)$", line, re.I)
+        if mm:
+            out.append(((mm.group(1) or "?").lower(), mm.group(2)))
     seen, unique = set(), []
     for s, f in out:
         if f not in seen:
@@ -586,6 +610,18 @@ def _log_notes(req: MockRequest) -> list[tuple[str, str]]:
     return notes
 
 
+def _operator_notes(req: MockRequest) -> list[tuple[str, str]]:
+    """Dated operator notes from the log exports' NOTES section (what 'keep operator notes' preserves)."""
+    notes: list[tuple[str, str]] = []
+    for c in req.calls("get_site_log"):
+        if not c.result or c.result.startswith("["):
+            continue
+        for ln in c.result.split("READINGS:")[0].split("FAULTS:")[0].splitlines():
+            if re.match(r"\s+\d{4}-\d\d-\d\d \d\d:\d\d OPER", ln):
+                notes.append((c.input.get("site_id", "?"), " ".join(ln.split())))
+    return notes
+
+
 def _fault_events(req: MockRequest) -> list[tuple[str, str]]:
     """The latest controller-log entry per fault code and site (what 'keep fault events' preserves)."""
     events: list[tuple[str, str]] = []
@@ -599,7 +635,7 @@ def _fault_events(req: MockRequest) -> list[tuple[str, str]]:
             if m:
                 latest[m.group(2)] = " ".join(ln.split())
                 count[m.group(2)] = count.get(m.group(2), 0) + 1
-        for code in sorted(latest, key=lambda k: -count[k])[:2]:
+        for code in sorted(latest, key=lambda k: (-count[k], k)):           # every fault code, most frequent first
             events.append((c.input.get("site_id", "?"), f"{code} x{count[code]}, latest {latest[code]}"))
     return events
 
@@ -613,10 +649,13 @@ def _summary(req: MockRequest, instructions: str) -> str:
               f"{', '.join(f['parts']) or 'none'}" for f in _findings_in_context(req)]
     lines += [f"remember ({site}): {note}" for site, note in _remember_notes(req)]
     lines += [f"fact ({site}): {fact}" for site, fact in _cited_replies(req)]
-    if _wants(instructions, "log_notes"):
-        lines += [f"log note ({site}): {note}" for site, note in _log_notes(req)]
-    if _wants(instructions, "fault_events"):
-        lines += [f"fault event ({site}): {ev}" for site, ev in _fault_events(req)]
+    carried = _wrapper_lines(req)
+    for kind, label, fresh in (("log_notes", "log note", _log_notes), ("fault_events", "fault event", _fault_events),
+                               ("operator_notes", "operator note", _operator_notes)):
+        if _wants(instructions, kind):
+            kept = [line for line in carried if line.startswith(label + " (")]     # from the previous summary
+            lines += kept + [f"{label} ({site}): {text}" for site, text in fresh(req)
+                             if f"{label} ({site}): {text}" not in kept]
     return "\n".join(lines)
 
 
@@ -634,6 +673,7 @@ def _scratchpad(req: MockRequest, site: str) -> dict:
         "remember": [note for s, note in _remember_notes(req) if s == site],
         "parts_used": sorted({p for f in findings for p in f["parts"]}),
         "fault_events": [ev for s, ev in _fault_events(req) if s == site],
+        "operator_notes": [n for s, n in _operator_notes(req) if s == site],
     }
     allowed = set(((req.output_schema or {}).get("properties") or {}).keys()) or set(entry)
     return {k: v for k, v in entry.items() if k in allowed}
@@ -675,9 +715,20 @@ def _wanted_sections(req: MockRequest, low: str) -> list[tuple[str, str]]:
 
 
 def _last_site(req: MockRequest) -> str | None:
-    for c in reversed(req.calls("get_site_brief")):
-        if c.input.get("site_id"):
-            return c.input["site_id"]
+    """The site the technician is at: the newest evidence in context - a get_site_brief call, the technician's own
+    words ('Arrived at ...', 'Leaving ...'), or an arrival summary - searched from the end of the history."""
+    for m in reversed(req.messages):
+        content = m.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content or [])
+        for b in reversed([b for b in blocks if isinstance(b, dict)]):
+            if b.get("type") == "tool_use" and b.get("name") == "get_site_brief" and (b.get("input") or {}).get("site_id"):
+                return b["input"]["site_id"]
+            if b.get("type") == "text" and not _is_wrapper(b.get("text", "")):
+                head = re.split(r"(?:Next|Last) stop:|Heading to", b.get("text", ""))[0]
+                if m.get("role") == "user" or head.startswith(("At ", "Noted for next time at")):
+                    site = _site_of(head)
+                    if site:
+                        return site
     return None
 
 
@@ -834,8 +885,8 @@ def field_agent(req: MockRequest) -> Reply:
             ack += f" Heading to {nxt}."
         return _reply(req, ack, 0.2)
     plan = _plan_tools(req, text)
-    if plan is not None:
-        return plan
+    if plan is not None and all(req.has_tool(b["name"]) for b in plan.content if b.get("type") == "tool_use"):
+        return plan                                      # a model can only call the tools it was given
     answer = _answer_lookup(req, text)
     if "I have not read" not in answer:
         return _reply(req, answer, 0.4, thinking="Answer from the section already in context.")
@@ -877,13 +928,14 @@ def site_reader(req: MockRequest) -> Reply:
     counts: dict[str, int] = {}
     for code in re.findall(r"^\d{4}-\d\d-\d\d \d\d:\d\d\s+(F\d\d)", text, re.M):
         counts[code] = counts.get(code, 0) + 1
+    fault_list = [{"code": c, "count": n} for c, n in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
     summary = {
         "site": site_m.group(1).strip() if site_m else title,
         "open_items": [ln.split(":", 1)[1].strip() for _, ln in notes if ln.startswith("OPEN:")],
         "safety_flags": [ln.split(":", 1)[1].strip() for _, ln in notes if ln.startswith("SAFETY:")],
         "parts_on_site": [ln.split(":", 1)[1].strip() for _, ln in notes if ln.startswith("PARTS:")],
         "facts": [{"fact": ln, "source_line": i} for i, ln in notes if not re.match(r"(OPEN|SAFETY|PARTS):", ln)],
-        "fault_counts": counts,
+        "fault_counts": fault_list,
         "readings_scanned": len(re.findall(r"^\d{4}-\d\d-\d\dT\d\d:00:00Z ", text, re.M)),
     }
     if req.output_schema is not None:
@@ -934,8 +986,9 @@ def planner(req: MockRequest) -> Reply:
         return say("Plan for today, in visiting order:\n" + "\n".join(lines), complexity=0.6,
                    thinking="One line per site: what is open, what is dangerous, what is already there.")
     hit = _best_line(req, text)
-    if hit is None and req.has_tool("ask_site_reader") and not req.called("ask_site_reader"):
-        site = _site_of(text) or "?"
+    if hit is None and req.has_tool("ask_site_reader") and not req.is_tool_result_turn:
+        prefix = re.search(r"\b(GB|HF|CC)-KP", text)
+        site = _site_of(text) or ({"GB": "gbwd", "HF": "harbor", "CC": "cobalt"}[prefix.group(1)] if prefix else "?")
         return use_tools(tool("ask_site_reader", site_id=site, question=text),
                          preface="That detail is not in the summaries; asking a reader to look it up in the source.")
     return say(f"From my context ({hit[0]}): {hit[1]}" if hit else NOT_KNOWN, complexity=0.3)
@@ -968,22 +1021,34 @@ def memory_agent(req: MockRequest) -> Reply:
                                                   if isinstance(b, dict))]
     searched = [c for c in this_turn if c.name == "memory_search"]
     wrote = [c for c in this_turn if c.name == "memory_write"]
-    remember = re.search(r"(?:remember|note) for next time:\s*(.+?)\s*$", text, re.I | re.S)
+    remember = re.search(r"(?:remember|note) for next time:\s*(.+?)\s*(?:(?:Next|Last) stop:.*)?$", text, re.I | re.S)
     if not searched:                                  # reads before acting - and before writing
         query = remember.group(1) if remember else text
         return use_tools(tool("memory_search", site_id=site, query=query[:200]),
                          preface="Checking memory for this site first.")
     if wrote:
-        status = [c.result_json() or {} for c in wrote]
-        return say("Memory: " + "; ".join(f"{s.get('status')} ({s.get('id', '-')})" for s in status), complexity=0.2)
+        parts = []
+        for c in wrote:
+            res = c.result_json() or {}
+            if res.get("status") == "rejected":
+                parts.append(f"not stored - {res.get('reason')}")
+            else:
+                parts.append(f"{res.get('status')} as {res.get('id')}")
+        return say("Memory: " + "; ".join(parts) + ".", complexity=0.2)
     notes, quarantined = _memory_hits(req)
     if remember:
+        # one fact per note: a compound note is split, so confirming a known half never swallows a new half
         note = " ".join(remember.group(1).split()).rstrip(".")
-        same = [n for n in notes if len(_matched(_terms(note), n.get("text", ""))) >= max(3, len(_terms(note)) // 2)]
-        if same:                                      # already known: confirm instead of writing a duplicate
-            return use_tools(tool("memory_write", site_id=site, text=note, confirms=same[0].get("id")),
-                             preface=f"That is already in memory as {same[0].get('id')}; confirming it.")
-        return use_tools(tool("memory_write", site_id=site, text=note), preface="Writing that down as today's note.")
+        facts = [f.strip() for f in re.split(r",\s+and\s+(?=the |a |an )|;\s+", note) if f.strip()]
+        calls = []
+        for fact in facts:
+            same = [n for n in notes if len(_matched(_terms(fact), n.get("text", ""))) >= max(3, len(_terms(fact)) // 2)]
+            calls.append(tool("memory_write", site_id=site, text=fact, confirms=same[0].get("id")) if same
+                         else tool("memory_write", site_id=site, text=fact))
+        known = [c["input"]["confirms"] for c in calls if "confirms" in c["input"]]
+        preface = (f"Already in memory as {', '.join(known)}; confirming that and writing the rest." if known
+                   else "Writing that down as today's note" + ("s." if len(calls) > 1 else "."))
+        return use_tools(*calls, preface=preface)
     relevant = [n for n in notes if _matched(_terms(text), n.get("text", ""))] or notes
     if not relevant:
         answer = "Memory has nothing for this site yet."

@@ -5,7 +5,8 @@ What lives here and why:
   day (the same transcript every lab replays), and the probe questions that measure what the agent still knows;
 * the agent's tools (site briefs, shift-log exports, manual sections, telemetry aggregates, the findings log),
   all answered from the course dataset so that the mock's replies are derived from real tool results;
-* a small, correct tool loop that returns per-turn accounting (prompt size, cache reads/writes, output, cost);
+* a small, correct tool loop that returns per-turn accounting (prompt size, cache reads/writes, output, cost), a
+  day runner with the hooks a harness uses (run_day), and probe questions asked in a fork (ask_probes);
 * the prefix comparison every lab uses to say whether a request rewrote history (what preserved thinking checks);
 * printing and money helpers.
 
@@ -22,14 +23,12 @@ import re
 import statistics
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Callable
 
 from labkit import DATA_DIR
 from labkit.models import get_spec
 from labkit.pricing import _get, cost_usd
 
-DAY_DIR = Path(__file__).resolve().parents[1]
 TODAY = "2026-09-15"
 DATA_END = "2026-09-14"            # last full day of telemetry
 LOG_DAYS = 7                       # the historian export covers the past week
@@ -115,18 +114,6 @@ SITE_BY_ID = {s.site_id: s for s in SITES}
 SITE_ORDER = [s.site_id for s in SITES]
 
 
-def site_of(text: str) -> str | None:
-    """The site a technician message refers to: '(site GBWD)' or the customer / plant name."""
-    m = re.search(r"\(site ([A-Za-z]+)\)", text)
-    if m and m.group(1).lower() in SITE_BY_ID:
-        return m.group(1).lower()
-    low = text.lower()
-    for s in SITES:
-        if s.customer.lower().split()[0] in low or s.plant.lower() in low:
-            return s.site_id
-    return None
-
-
 # =============================================================================================== the day's script
 @dataclass(frozen=True)
 class Step:
@@ -204,8 +191,8 @@ SCRIPT: list[Step] = [
                                  "operator reset it. What is the rule for F07, and what do I do?"),
     Step(31, "cobalt", "log", "Log it: CC-KP600-01, motor current above rated since the demand increase (overload "
                               "right of BEP), action: throttle to the duty point and review resizing, no parts; and "
-                              "CC-KP250X-02, F07 ground fault on an ATEX unit, escalated to the on-call FSE as P1 "
-                              "per SOP-SUP-007, unit not to be restarted."),
+                              "CC-KP250X-02, F07 ground fault on an ATEX unit - not to be restarted before "
+                              "inspection, action: escalated to the on-call FSE as P1 per SOP-SUP-007, no parts."),
     Step(32, "cobalt", "telemetry", "CC-KP100-04 had its VS-10 vibration sensor replaced in March. Pull its 30-day "
                                     "vibration summary and tell me whether the reading is valid."),
     Step(33, "cobalt", "depart", "Leaving Cobalt. Remember for next time: Cobalt issues a gas-test certificate at the "
@@ -704,13 +691,6 @@ def run_turn(create: Callable[..., Any], *, params: dict, messages: list[dict], 
     return stats
 
 
-def turn_row(t: TurnStats) -> list:
-    return [t.number, t.site, t.requests, t.prompt, t.cache_read, t.cache_write, t.output, money(t.cost)]
-
-
-TURN_HEADERS = ["turn", "site", "requests", "context", "cache read", "cache write", "output", "cost"]
-
-
 # =============================================================================================== prefix comparison
 def _canon(value: Any) -> str:
     """Bytes the way the binding check sees them: cache_control stripped, key order irrelevant."""
@@ -866,3 +846,13 @@ def tool_result_tokens(messages: list[dict]) -> int:
                 text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
                 total += approx_tokens(text)
     return total
+
+
+def api_error(exc: Exception) -> str:
+    """The API's own error message from an SDK exception (what you would grep your logs for)."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        message = (body.get("error") or {}).get("message")
+        if message:
+            return message
+    return str(exc)

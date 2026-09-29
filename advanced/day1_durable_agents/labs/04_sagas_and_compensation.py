@@ -5,26 +5,32 @@ Objective
     book the carrier collection, send the confirmation - four effects in four systems, each at-most-once, with
     a compensation for each.  Watch the happy path, a carrier failure that rolls the earlier steps back, a crash
     in the middle that resumes without repeating a step, a crash inside a step that recovers from the carrier's
-    own record, and the "just retry" version that double-reserves stock.
+    own record, a crash during or right after the rollback (the saga's direction must be durable too), and the
+    "just retry" version that double-reserves stock.
 
 Concepts
     sagas (forward steps + compensating steps), semantic rollback vs transactional rollback, compensations as
-    effects, recovery of an in-flight step from its system of record, the agent as planner vs the saga as
-    executor, two-phase commit and why nobody offers it across an ERP, a carrier and a mail gateway,
-    "just retry" and its precondition (idempotent steps).
+    effects, recovery of an in-flight step from its system of record, the saga's direction as logged state
+    (saga.rolling_back), the agent as planner vs the saga as executor, two-phase commit and why nobody offers it
+    across an ERP, a carrier and a mail gateway, "just retry" and its precondition (idempotent steps).
 
 Run
     python advanced/day1_durable_agents/labs/04_sagas_and_compensation.py
 
 What to observe
     * The saga.step events in the log, one per effect, with status executed / replayed / recovered.
-    * On the carrier failure: saga.compensated events in reverse order, the reservation released, the RMA
-      cancelled, and the agent escalating instead of promising a collection.
+    * On the carrier failure: saga.rolling_back (the decision, logged first), then saga.compensated events in
+      reverse order - the reservation released, the RMA withdrawn - and the agent escalating instead of
+      promising a collection.
     * After the mid-saga crash: two steps replayed, two executed, reserved stock up by 2 - once.
-    * The naive version after the same crash: reserved stock up by 4.
+    * Step 5's table: a saga that keeps its direction in memory goes FORWARD after a crash that followed its
+      rollback - a booked collection and a confirmation email for a withdrawn RMA and released stock; with the
+      direction logged, the resumer finishes (or replays) the rollback instead.
+    * The naive version after the mid-saga crash: reserved stock up by 4.
 """
 # test: expect=saga.compensated
 # test: expect=replayed
+# test: expect=saga.rolling_back
 
 from __future__ import annotations
 
@@ -172,29 +178,51 @@ class Saga:
 
     Forward: a step already 'done' in the effects table is replayed; a step left 'started' by a dead worker is
     recovered from its own system of record (or the saga fails closed); anything else is executed. Backward: when
-    a step raises, the completed steps are compensated in reverse order - compensations are effects too, so a
-    crash during rollback resumes the rollback."""
+    a step fails, the saga FIRST logs its decision (saga.rolling_back, with the steps to undo), then compensates
+    the completed steps in reverse order - compensations are effects too. A resumed saga reads that decision
+    before anything else, so a crash during or after the rollback resumes the rollback instead of going forward.
+    `durable_direction=False` keeps the decision in memory only - the bug step 5 demonstrates."""
 
-    def __init__(self, ctx: ToolContext, steps: list[Step], *, crash_after: str | None = None,
-                 crash_inside: str | None = None) -> None:
-        self.ctx, self.steps, self.crash_after, self.crash_inside = ctx, steps, crash_after, crash_inside
+    def __init__(self, ctx: ToolContext, steps: list[Step], *, durable_direction: bool = True,
+                 crash_after: str | None = None, crash_inside: str | None = None,
+                 crash_after_undo: str | None = None) -> None:
+        self.ctx, self.steps, self.durable_direction = ctx, steps, durable_direction
+        self.crash_after, self.crash_inside, self.crash_after_undo = crash_after, crash_inside, crash_after_undo
+
+    def key(self, step: str, suffix: str = "") -> str:
+        return f"{self.ctx.idempotency_key}:{step}{suffix}"
 
     def log(self, event: str, **payload) -> None:
         self.ctx.store.append(self.ctx.run_id, event, {"tool_use_id": self.ctx.tool_use_id, **payload})
 
+    def rollback_decision(self) -> dict | None:
+        for e in self.ctx.store.events(self.ctx.run_id, types=("saga.rolling_back",)):
+            if e["tool_use_id"] == self.ctx.tool_use_id:
+                return e
+        return None
+
     def run(self) -> dict:
+        decision = self.rollback_decision() if self.durable_direction else None
+        if decision is not None:                    # a worker died during or after the rollback: never go forward
+            state, completed = {}, []
+            for st in self.steps:
+                if st.name in decision["completed"]:
+                    with self.ctx.effect(self.key(st.name)) as eff:       # done: its stored result, for the undo
+                        state[st.name] = eff.stored
+                    completed.append(st)
+            self.log("saga.resumed", direction="rollback", step=decision["step"])
+            raise SagaFailed(decision["step"], decision["reason"], self.compensate(completed, state))
         state: dict[str, Any] = {}
         completed: list[Step] = []
         for st in self.steps:
-            with self.ctx.effect(f"{self.ctx.idempotency_key}:{st.name}") as eff:
+            with self.ctx.effect(self.key(st.name)) as eff:
                 if eff.done:
                     result, how = eff.stored, "replayed"
                 elif eff.in_flight:
                     found = st.recover(state) if st.recover else None
                     if found is None:
                         self.log("saga.step", step=st.name, status="unknown")
-                        raise SagaFailed(st.name, "outcome unknown after a crash; needs reconciliation",
-                                         self.compensate(completed, state))
+                        raise self.fail(st.name, "outcome unknown after a crash; needs reconciliation", completed, state)
                     result, how = eff.commit(found), "recovered"
                 else:
                     try:
@@ -204,7 +232,7 @@ class Saga:
                             raise Crash(f"worker killed inside {st.name}, after the carrier answered")
                     except Exception as exc:
                         self.log("saga.step", step=st.name, status="failed", error=str(exc))
-                        raise SagaFailed(st.name, str(exc), self.compensate(completed, state)) from exc
+                        raise self.fail(st.name, str(exc), completed, state) from exc
                     result, how = eff.commit(result), "executed"
             state[st.name] = result
             completed.append(st)
@@ -214,13 +242,18 @@ class Saga:
                 raise Crash(f"worker killed after saga step {st.name}")
         return state
 
+    def fail(self, step: str, reason: str, completed: list[Step], state: dict) -> "SagaFailed":
+        if self.durable_direction:                  # the decision is logged BEFORE the first compensation
+            self.log("saga.rolling_back", step=step, reason=reason, completed=[s.name for s in completed])
+        return SagaFailed(step, reason, self.compensate(completed, state))
+
     def compensate(self, completed: list[Step], state: dict) -> list[str]:
         undone = []
         for st in reversed(completed):
             if st.compensate is None:
                 continue
             try:
-                with self.ctx.effect(f"{self.ctx.idempotency_key}:{st.name}:undo") as eff:
+                with self.ctx.effect(self.key(st.name, ":undo")) as eff:
                     if not eff.done:
                         eff.commit(st.compensate(state))
                         self.log("saga.compensated", step=st.name)
@@ -228,6 +261,9 @@ class Saga:
             except Exception as exc:                 # a compensation that fails is logged for a person, never hidden
                 self.log("saga.compensation_failed", step=st.name, error=str(exc))
                 undone.append(f"{st.name} (FAILED: {exc})")
+            if self.crash_after_undo == st.name:
+                self.crash_after_undo = None
+                raise Crash(f"worker killed during the rollback, after undoing {st.name}")
         return undone
 
 
@@ -243,13 +279,16 @@ def run_naively(steps: list[Step], *, crash_after: str | None) -> dict:
 
 # ---------------------------------------------------------------------------- the executor
 def make_executor(desk: SupportDesk, db, warehouse: Warehouse, carrier: CarrierAPI, mail: MailGateway, *,
-                  durable: bool = True, crash_after: list[str] | None = None, crash_inside: list[str] | None = None):
-    reads = d1.desk_executor(desk)
+                  durable: bool = True, durable_direction: bool = True, crash_after: list[str] | None = None,
+                  crash_inside: list[str] | None = None, crash_after_undo: list[str] | None = None,
+                  crash_after_rollback: list[bool] | None = None):
+    desk_tools = d1.desk_executor(desk)
     crash_after, crash_inside = crash_after or [], crash_inside or []
+    crash_after_undo, crash_after_rollback = crash_after_undo or [], crash_after_rollback or []
 
     def execute(name: str, tool_input: dict, ctx: ToolContext) -> dict:
         if name != "arrange_replacement":
-            return reads(name, tool_input, ctx)
+            return desk_tools(name, tool_input, ctx)
         order_id, sku, qty = tool_input["order_id"], tool_input["sku"], int(tool_input["qty"])
         received = tool_input["received_sku"]
         # A stable reference per tool call (durable) vs a fresh one per attempt (naive integrations)
@@ -275,11 +314,15 @@ def make_executor(desk: SupportDesk, db, warehouse: Warehouse, carrier: CarrierA
         if not durable:
             state = run_naively(steps, crash_after=crash_after.pop(0) if crash_after else None)
         else:
-            saga = Saga(ctx, steps, crash_after=crash_after.pop(0) if crash_after else None,
-                        crash_inside=crash_inside.pop(0) if crash_inside else None)
+            saga = Saga(ctx, steps, durable_direction=durable_direction,
+                        crash_after=crash_after.pop(0) if crash_after else None,
+                        crash_inside=crash_inside.pop(0) if crash_inside else None,
+                        crash_after_undo=crash_after_undo.pop(0) if crash_after_undo else None)
             try:
                 state = saga.run()
             except SagaFailed as exc:
+                if crash_after_rollback and crash_after_rollback.pop(0):
+                    raise Crash("worker killed after the rollback, before the tool result was logged") from None
                 return {"error": f"{exc.step} failed: {exc.reason}", "compensated": exc.compensated}
         return {"rma_id": state["create_rma"]["rma_id"], "reservation": state["reserve_stock"],
                 "pickup": state["book_pickup"], "notification": state["notify_customer"]}
@@ -306,31 +349,59 @@ def show_saga(store, run_id: str) -> None:
     for e in store.events(run_id):
         if e["type"].startswith("saga."):
             extra = f"  error={d1.short(e['error'], 60)}" if e.get("error") else ""
-            print(f"    {e['seq']:>3}  {e['type']:<17} {e['step']:<16} {e.get('status', '')}{extra}")
+            if e["type"] == "saga.rolling_back":
+                extra = f"  undo: {', '.join(reversed(e['completed']))}"
+            print(f"    {e['seq']:>3}  {e['type']:<17} {e.get('step', ''):<16} {e.get('status', '')}{extra}")
 
 
-def scenario(client, ticket, title: str, *, worker_kwargs: dict, fail_carrier: str | None = None):
+def world_line(world: "World", before: int, sku: str = "IMP-250-D") -> str:
+    rma_ids = [r[0] for r in world.db.execute("SELECT rma_id FROM rmas WHERE order_id = 'SO-10292'")]
+    active = sum(1 for p in world.carrier.pickups.values() if not p.get("cancelled"))
+    return (f"reserved {sku} {before} -> {world.warehouse.reserved(sku)} | RMAs for SO-10292: "
+            f"{[(r, rma_status(world.db, r)) for r in rma_ids]} | pickups booked: {active} | emails: {len(world.mail.sent)}")
+
+
+def scenario(client, ticket, title: str, *, worker_kwargs: dict, fail_carrier: str | None = None, quiet: bool = False):
     world = World()
     sku = "IMP-250-D"
     before = world.warehouse.reserved(sku)
     world.carrier.fail_next = fail_carrier
     run = world.store.create("replacement", input=d1.run_input(ticket), run_id=f"rep-{ticket['ticket_id']}")
-    print(f"  {title}")
+    say = (lambda *a, **k: None) if quiet else print
+    say(f"  {title}")
     try:
         outcome = world.worker(client, ticket, "worker-a", **worker_kwargs).run(run.id)
     except Crash as exc:
-        print(f"    worker-a: CRASH - {exc}")
-        outcome = world.worker(client, ticket, "worker-b", durable=worker_kwargs.get("durable", True)).run(run.id)
-        print(f"    worker-b: {d1.outcome_line(outcome)}")
+        say(f"    worker-a: CRASH - {exc}")
+        resume_kwargs = {k: worker_kwargs[k] for k in ("durable", "durable_direction") if k in worker_kwargs}
+        outcome = world.worker(client, ticket, "worker-b", **resume_kwargs).run(run.id)
+        say(f"    worker-b: {d1.outcome_line(outcome)}")
     else:
-        print(f"    worker-a: {d1.outcome_line(outcome)}")
-    print("    reply: " + d1.short(outcome.reply, 150))
-    show_saga(world.store, run.id)
-    rma_ids = [r[0] for r in world.db.execute("SELECT rma_id FROM rmas WHERE order_id = 'SO-10292'")]
-    print(f"    world: reserved {sku} {before} -> {world.warehouse.reserved(sku)} | RMAs for SO-10292: "
-          f"{[(r, rma_status(world.db, r)) for r in rma_ids]} | pickups: {len(world.carrier.pickups)} | "
-          f"emails: {len(world.mail.sent)}")
-    return world
+        say(f"    worker-a: {d1.outcome_line(outcome)}")
+    if not quiet:
+        print("    reply: " + d1.short(outcome.reply, 150))
+        show_saga(world.store, run.id)
+        print("    world: " + world_line(world, before))
+    return world, outcome, before
+
+
+def step_rollback_crashes(client, ticket) -> None:
+    failure = "SwiftParcel: no collection capacity in this postcode before 2026-09-22"
+    cases = [("direction in memory, crash after the rollback", {"durable_direction": False, "crash_after_rollback": [True]}),
+             ("direction logged, crash after the rollback", {"crash_after_rollback": [True]}),
+             ("direction logged, crash in the middle of it", {"crash_after_undo": ["reserve_stock"]})]
+    print(f"  {'scenario':<46} {'reserved':<9} {'RMA-7023':<9} {'pickups':<8} {'emails':<7} customer told")
+    rows = []
+    for label, kw in cases:
+        world, outcome, before = scenario(client, ticket, label, worker_kwargs=kw, fail_carrier=failure, quiet=True)
+        active = sum(1 for p in world.carrier.pickups.values() if not p.get("cancelled"))
+        told = ("collection booked, replacement reserved" if "booked a collection" in outcome.reply
+                else "escalated to the order desk" if "order desk" in outcome.reply else d1.short(outcome.reply, 40))
+        reserved = f"{before} -> {world.warehouse.reserved('IMP-250-D')}"
+        print(f"  {label:<46} {reserved:<9} {rma_status(world.db, 'RMA-7023'):<9} {active:<8} {len(world.mail.sent):<7} {told}")
+        rows.append((label, world))
+    print("  saga events of the last case (worker-a rolled back reserve_stock and died; worker-b finished):")
+    show_saga(rows[-1][1].store, f"rep-{ticket['ticket_id']}")
 
 
 def main() -> None:
@@ -369,7 +440,17 @@ def main() -> None:
                "would fail closed here and compensate, which is the safe default for money and the wrong default "
                "for a courier."))
 
-    step(5, "'Just retry': the same crash without effects or compensations")
+    step(5, "A crash during or after the rollback: the saga's direction must be durable too")
+    step_rollback_crashes(client, ticket)
+    print(wrap("First row: the rollback finished, then the worker died before the tool result was logged. The resumer "
+               "re-ran the tool call, the saga went FORWARD - create_rma and reserve_stock 'replayed' from the "
+               "effects table although both had been undone, the failed book_pickup (whose claim an ordinary "
+               "failure releases) executed again and succeeded - and the customer was promised a replacement that "
+               "is not reserved, against an RMA that was withdrawn. With the decision logged first "
+               "(saga.rolling_back), the resumer reads it before anything else and finishes or replays the "
+               "rollback: every compensation is an effect, so the ones already done are skipped."))
+
+    step(6, "'Just retry': the same crash without effects or compensations")
     scenario(client, ticket, "naive executor, worker dies after reserve_stock, resumed from scratch:",
              worker_kwargs={"durable": False, "crash_after": ["reserve_stock"]})
     print(wrap("The RMA survived only because create_rma is idempotent by design (the tool returns the open RMA). "
@@ -377,11 +458,13 @@ def main() -> None:
                "someone notices. 'Just retry' is fine when every step is idempotent by itself; it is a bet on "
                "every downstream system, taken silently."))
 
-    step(6, "Where the options stand")
-    print("  option              guarantee                              needs                                    fits")
-    print("  just retry          none (each step's own idempotency)     idempotent steps, no ordering             reads, idempotent writes")
-    print("  saga                every step done or compensated         a compensation per step, durable log      ERP + carrier + email")
-    print("  two-phase commit    atomic across systems                  a coordinator and prepare/commit on ALL    databases you control")
+    step(7, "Where the options stand")
+    options = [("option", "guarantee", "needs", "fits"),
+               ("just retry", "none (each step's own idempotency)", "idempotent steps, no ordering", "reads, idempotent writes"),
+               ("saga", "every step done or compensated", "a compensation per step, durable log", "ERP + carrier + email"),
+               ("two-phase commit", "atomic across systems", "prepare/commit on EVERY participant", "databases you control")]
+    for row in options:
+        print(f"  {row[0]:<18} {row[1]:<36} {row[2]:<37} {row[3]}")
     print(wrap("Two-phase commit needs every participant to hold a prepared transaction open until the coordinator "
                "decides; an ERP, a courier and a mail gateway do not offer that, and a coordinator that dies holds "
                "locks everywhere. Sagas trade atomicity for availability: between steps the world is visibly "

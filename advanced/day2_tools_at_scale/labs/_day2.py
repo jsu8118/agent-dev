@@ -2,11 +2,15 @@
 
 What lives here and why:
 * the tool catalog - loading `advanced/data/tools/catalog.json`, turning entries into API-ready definitions
-  (loaded or deferred, strict or not, with or without `input_examples`), and the always-loaded core set;
+  (loaded or deferred, strict or not, with or without `input_examples`), the always-loaded core set, and the three
+  tools the labs add outside the catalog (`get_shipment_v2`, `get_recall_status`, `draft_bulletin`);
+* `count_prompt` - prompt tokens of a request shape via `count_tokens`, with the documented fallback for endpoints
+  that reject server tools;
 * a small backend for the catalog - `KestrelOps.run(name, input)` answers the tools the labs call from the ops
   database, the recall files and deterministic synthetic telemetry, with one error envelope for every failure;
 * the labelled task sets the labs score - the discovery set (lab 02), the wide-agent tasks (lab 03), the phased
-  conversation (lab 04) and the 30-task selection eval with its two description sets (lab 07);
+  conversation (lab 04), the recall units (lab 05), the bulletin facts (lab 06) and the 30-task selection eval with
+  its two description sets (lab 07);
 * one agent loop (`run_agent`) that every lab measures with, so token and cache numbers are comparable;
 * printing and pricing helpers.
 """
@@ -23,6 +27,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+import anthropic
 import jsonschema
 
 from labkit import DATA_DIR, MODEL, REPO_ROOT, text_of
@@ -61,13 +66,17 @@ def catalog_tools() -> list[dict]:
     return catalog()["tools"]
 
 
+def all_names() -> list[str]:
+    return [t["name"] for t in catalog_tools()]
+
+
 @lru_cache(maxsize=1)
 def _by_name() -> dict[str, dict]:
     return {t["name"]: t for t in catalog_tools()}
 
 
 def entry(name: str) -> dict:
-    return _by_name()[name]
+    return _by_name()[name] if name in _by_name() else EXTRA_TOOLS[name]
 
 
 def meta(name: str) -> dict:
@@ -102,16 +111,17 @@ def api_tool(tool_entry: dict, *, defer: bool = False, strict: bool = False, exa
 
 
 def loaded_toolset(names: Iterable[str], **kw: Any) -> list[dict]:
-    """Every named catalog tool, loaded (no deferral)."""
+    """Every named tool, loaded (no deferral), in the order given."""
     return [api_tool(entry(n), **kw) for n in names]
 
 
 def wide_toolset(search: dict | None = SEARCH_BM25, loaded: Iterable[str] | None = None,
                  names: Iterable[str] | None = None, **kw: Any) -> list[dict]:
-    """The wide toolset: a search tool, the always-loaded core, and the rest of the catalog deferred."""
+    """The wide toolset: a search tool, the always-loaded core, and the rest of the catalog deferred (catalog order,
+    so the array is byte-identical on every request)."""
     loaded_set = set(core_names() if loaded is None else loaded)
     tools = [dict(search)] if search else []
-    for name in (names or [t["name"] for t in catalog_tools()]):
+    for name in (names or all_names()):
         tools.append(api_tool(entry(name), defer=(name not in loaded_set) and search is not None, **kw))
     return tools
 
@@ -120,6 +130,90 @@ def domain_toolset(domain: str, **kw: Any) -> list[dict]:
     """A hand-picked route: the core tools plus one domain, all loaded."""
     names = list(dict.fromkeys(core_names() + domain_tools(domain)))
     return loaded_toolset(names, **kw)
+
+
+# ------------------------------------------------------------------------------------ tools outside the catalog
+def _schema(props: dict, required: list[str]) -> dict:
+    return {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+
+
+EXTRA_TOOLS: dict[str, dict] = {
+    # lab 07: the versioned successor of get_shipment (a new name, not an edited definition)
+    "get_shipment_v2": {
+        "name": "get_shipment_v2",
+        "description": "Return one shipment's booking record by shipment ID (SH-50283): carrier, tracking number, ship date, "
+                       "promised ETA, delivered date and any exception reason; with include_events=true also the carrier's "
+                       "scan events. Use for 'which carrier', 'what ETA did we promise', 'what exception is on it'.",
+        "input_schema": _schema({"shipment_id": {"type": "string", "description": "Shipment ID, e.g. SH-50210."},
+                                 "include_events": {"type": "boolean", "description": "Also return carrier scan events."}},
+                                ["shipment_id"]),
+        "meta": {"domain": "logistics", "risk": "read", "side_effect": False, "pii": False, "approval_required": False,
+                 "core": False},
+    },
+    # lab 04: a tool the recall team shipped after the conversation started (defined inline, by value)
+    "get_recall_status": {
+        "name": "get_recall_status",
+        "description": "Recall campaign status of one unit under RC-2026-03: whether it is affected, its remedy, whether a "
+                       "remedy visit is already scheduled or done, and the contact deadline for its risk class. Use for "
+                       "'is this unit scheduled under the recall', 'what is the recall status of'.",
+        "input_schema": _schema({"serial_number": {"type": "string", "description": "Unit serial number, e.g. KC2-2608-0001."}},
+                                ["serial_number"]),
+        "meta": {"domain": "quality", "risk": "read", "side_effect": False, "pii": False, "approval_required": False,
+                 "core": False},
+    },
+    # lab 06: a client tool whose input is a long document, streamed with eager_input_streaming
+    "draft_bulletin": {
+        "name": "draft_bulletin",
+        "description": "Save a draft technical safety bulletin for review by the quality lead. Use it when asked to draft or "
+                       "write a bulletin. Put the complete plain-text bulletin in `body` and the operator actions in "
+                       "`actions`. Drafts are not sent to anyone.",
+        "input_schema": _schema({
+            "bulletin_id": {"type": "string", "pattern": r"^TSB-\d{4}-\d{2}$", "description": "Bulletin ID, e.g. TSB-2026-09."},
+            "title": {"type": "string", "description": "One-line title."},
+            "audience": {"type": "string", "enum": ["operators", "installers", "distributors"],
+                         "description": "Who the bulletin is written for."},
+            "lots": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": r"^[A-Z]{2}-\d{4}-[A-Z]$"},
+                     "description": "Affected manufacturing lots, e.g. PS-2608-B."},
+            "body": {"type": "string", "minLength": 800, "maxLength": 3000,
+                     "description": "The full bulletin text, 800-3,000 characters."},
+            "actions": {"type": "array", "minItems": 3, "items": {"type": "string"},
+                        "description": "Actions operators must take now, one per item."}},
+            ["bulletin_id", "title", "audience", "lots", "body", "actions"]),
+        "meta": {"domain": "communications", "risk": "write", "side_effect": True, "pii": False, "approval_required": False,
+                 "core": False},
+    },
+}
+
+
+# ------------------------------------------------------------------------------------ counting prompts
+def count_prompt(client: Any, tools: list[dict], messages: list[dict], *, system: Any = None, model: str = MODEL) -> int:
+    """Prompt tokens of a request shape. `count_tokens` is free and exact; where the endpoint rejects a request because
+    of a server tool (the tool search or code execution tool), fall back to a `max_tokens=1` request and read what it
+    billed - a paid call of a few thousand input tokens."""
+    kw: dict = {"model": model, "messages": messages}
+    if tools:
+        kw["tools"] = tools
+    if system:
+        kw["system"] = system
+    try:
+        return client.messages.count_tokens(**kw).input_tokens
+    except anthropic.BadRequestError:
+        if not any(t.get("type") for t in tools or []):
+            raise
+        r = client.messages.create(max_tokens=1, **kw)
+        return prompt_size(r.usage)
+
+
+def cached_system(text: str) -> list[dict]:
+    """A system prompt with a cache breakpoint at its end: requests that share tools + system (an eval's tasks, a
+    batch of discovery queries) read that prefix from the cache instead of paying for it on every call."""
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
+def token_cost(client: Any, text: str, model: str = MODEL) -> int:
+    """Tokens a piece of text adds to a user message (count_tokens difference)."""
+    base = client.messages.count_tokens(model=model, messages=[{"role": "user", "content": "x"}]).input_tokens
+    return client.messages.count_tokens(model=model, messages=[{"role": "user", "content": "x\n" + text}]).input_tokens - base
 
 
 # ------------------------------------------------------------------------------------ pricing and printing
@@ -132,7 +226,7 @@ def output_price(model: str = MODEL) -> float:
 
 
 def money(x: float) -> str:
-    return f"${x:,.4f}" if x < 1 else f"${x:,.2f}"
+    return f"${x:,.4f}" if abs(x) < 1 else f"${x:,.2f}"
 
 
 def prompt_size(usage: Any) -> int:
@@ -165,15 +259,21 @@ def _cell(v: Any) -> str:
 def table(rows: list[list], headers: list[str], indent: str = "  ") -> None:
     cells = [[_cell(v) for v in r] for r in rows]
     widths = [max(len(h), *(len(r[i]) for r in cells)) if cells else len(h) for i, h in enumerate(headers)]
-    numeric = [all(re.fullmatch(r"[-$\d,.%x]+", r[i]) for r in cells) if cells else False for i in range(len(headers))]
+    numeric = [all(re.fullmatch(r"[-+$\d,.%x]+", r[i]) for r in cells) if cells else False for i in range(len(headers))]
 
     def fmt(row: list[str]) -> str:
-        return indent + "  ".join((c.rjust(w) if numeric[i] else c.ljust(w)) for i, (c, w) in enumerate(zip(row, widths)))
+        return (indent + "  ".join((c.rjust(w) if numeric[i] else c.ljust(w))
+                                   for i, (c, w) in enumerate(zip(row, widths)))).rstrip()
 
     print(fmt(headers))
-    print(indent + "  ".join("-" * w for w in widths))
+    print((indent + "  ".join(("-" if h else " ") * w for h, w in zip(headers, widths))).rstrip())
     for r in cells:
         print(fmt(r))
+
+
+def clip(text: str, n: int) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 3] + "..."
 
 
 def blocks_of(response: Any) -> list[str]:
@@ -183,10 +283,18 @@ def blocks_of(response: Any) -> list[str]:
         kind = b.type
         if kind in ("tool_use", "server_tool_use"):
             kind += ":" + b.name
+            if getattr(b, "caller", None) is not None and getattr(b.caller, "type", "direct") != "direct":
+                kind += "(from code)"
         elif kind == "tool_search_tool_result":
             kind += f"({len(getattr(b.content, 'tool_references', []) or [])} refs)"
         out.append(kind)
     return out
+
+
+def search_input(block: Any) -> str:
+    """The query of a tool-search server_tool_use block (documented as `query`; read defensively)."""
+    data = block.input or {}
+    return str(data.get("query") or data.get("pattern") or "")
 
 
 # ------------------------------------------------------------------------------------ the backend
@@ -220,11 +328,24 @@ FAULT_CODES = {
 }
 
 
+DEFAULT_NEXT_ACTION = {
+    "not_found": "check the ID with the user; do not guess another",
+    "unknown_tool": "use one of your available tools",
+    "invalid_input": "fix the arguments and call again",
+}
+
+
 class KestrelOps:
     """A small backend for the catalog: reads from the ops database and the recall files, deterministic synthetic
-    telemetry, in-memory writes. `run(name, input)` returns (tool_result content, is_error) like kestrel.SupportDesk."""
+    telemetry, in-memory writes. `run(name, input)` returns (tool_result content, is_error) like kestrel.SupportDesk.
 
-    def __init__(self) -> None:
+    `allowed` (a set of tool names) makes it refuse everything else - the executor-side half of a scoped toolset;
+    `retired` ({old: new}) makes a retired tool answer with an error that names its successor."""
+
+    def __init__(self, *, allowed: Iterable[str] | None = None, retired: dict[str, str] | None = None) -> None:
+        self.allowed = set(allowed) if allowed is not None else None
+        self.retired = dict(retired or {})
+        self.drafts: list[dict] = []
         self.db = ops_db()
         self.calls: list[dict] = []
         self.tickets: dict[str, dict] = {"SVC-4021": {"ticket_id": "SVC-4021", "customer_id": "C-1005", "site_id": "SITE-1005-A",
@@ -253,8 +374,14 @@ class KestrelOps:
         tool_input = dict(tool_input or {})
         handler = getattr(self, f"t_{name}", None)
         try:
-            if name not in _by_name():
+            if name not in _by_name() and name not in EXTRA_TOOLS:
                 raise ToolError("unknown_tool", f"{name!r} is not a Kestrel tool.")
+            if self.allowed is not None and name not in self.allowed:
+                raise ToolError("not_available", f"{name} is not available in this session.",
+                                "use one of your available tools, or escalate_to_human")
+            if name in self.retired:
+                raise ToolError("retired", f"{name} has been retired; use {self.retired[name]} with the same "
+                                "arguments.", self.retired[name])
             schema = entry(name)["input_schema"]
             errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(tool_input), key=lambda e: list(e.path))
             if errors:
@@ -267,11 +394,13 @@ class KestrelOps:
             content, is_error = json.dumps(result, default=str), False
         except ToolError as exc:
             envelope: dict = {"error": {"code": exc.code, "message": str(exc)}}
-            if exc.next_action:
-                envelope["error"]["next_action"] = exc.next_action
+            next_action = exc.next_action or DEFAULT_NEXT_ACTION.get(exc.code)
+            if next_action:
+                envelope["error"]["next_action"] = next_action
             content, is_error = json.dumps(envelope), True
         except TypeError as exc:
-            content, is_error = json.dumps({"error": {"code": "invalid_input", "message": f"{name}: {exc}"}}), True
+            content, is_error = json.dumps({"error": {"code": "invalid_input", "message": f"{name}: {exc}",
+                                                      "next_action": DEFAULT_NEXT_ACTION["invalid_input"]}}), True
         self.calls.append({"name": name, "input": tool_input, "is_error": is_error})
         return content, is_error
 
@@ -456,8 +585,8 @@ class KestrelOps:
 
     def t_issue_refund(self, order_id: str, amount_usd: float, reason: str, rma_id: str | None = None) -> dict:
         o = self._order(order_id)
-        role = "finance_director" if amount_usd > 10_000 else "support_manager" if amount_usd > 2_500 else "support_manager"
-        self._needs_approval("issue_refund", role, amount_usd)
+        if amount_usd > 2_500:                            # the agent's limit; above it a person decides
+            self._needs_approval("issue_refund", "finance_director" if amount_usd > 10_000 else "support_manager", amount_usd)
         return {"refund_id": f"RF-{_seed(order_id) % 9000 + 1000}", "order_id": o["order_id"], "amount_usd": amount_usd}
 
     # -- returns --------------------------------------------------------------------------------------------------
@@ -903,9 +1032,37 @@ class KestrelOps:
     def t_log_call(self, contact_id: str, summary: str) -> dict:
         return {"contact_id": contact_id, "logged": True}
 
+    # -- tools outside the catalog (labs 04 and 06) ----------------------------------------------------------------
+    @lru_cache(maxsize=1)
+    def _recall_units(self) -> dict[str, dict]:
+        return {u["serial_number"]: u for u in _load(ADV_DATA / "recall" / "affected_units.json")["units"]}
+
+    def t_get_recall_status(self, serial_number: str) -> dict:
+        u = self._recall_units().get(serial_number.upper())
+        if u is None:
+            self._build(serial_number)                # a real unit that is simply not in the campaign
+            return {"serial_number": serial_number.upper(), "recall": "RC-2026-03", "affected": False}
+        rules = {r["risk_class"]: r for r in self._campaign()["priority_rules"]}[u["risk_class"]]
+        visit = next((v for v in self.visits if self.tickets.get(v["ticket_id"], {}).get("serial_number") == u["serial_number"]
+                      or self.tickets.get(v["ticket_id"], {}).get("site_id") == u["site_id"]), None)
+        return {"serial_number": u["serial_number"], "recall": "RC-2026-03", "affected": True,
+                "scheduled": visit is not None,
+                "remedy_visit": f"{visit['visit_id']} with {visit['engineer']} at {visit['slot_start']}" if visit else None,
+                "remedy": u["remedy"], "lot": u["lot"], "risk_class": u["risk_class"],
+                "contact_within_business_days": rules["contact_within_business_days"]}
+
+    def t_draft_bulletin(self, bulletin_id: str, title: str, audience: str, lots: list, body: str, actions: list) -> dict:
+        draft = {"draft_id": f"DRAFT-{len(self.drafts) + 1:03d}", "bulletin_id": bulletin_id, "title": title, "audience": audience,
+                 "lots": lots, "words": len(body.split()), "actions": len(actions), "review_by": "the quality lead"}
+        self.drafts.append({**draft, "body": body, "action_list": list(actions)})
+        self.audit.append({"action": "draft_bulletin", "draft_id": draft["draft_id"]})
+        return draft
+
     def t_send_email(self, to: str, subject: str, body: str) -> dict:
         self._needs_approval("send_email", "support_manager")
         return {"message_id": f"mail-{self._id('MSG')}", "to": to, "subject": subject}
+
+
 
 
 # ------------------------------------------------------------------------------------ the agent loop
@@ -950,6 +1107,14 @@ class RunResult:
         return [c for t in self.turns for c in t.calls]
 
     @property
+    def called(self) -> list[str]:
+        return [c.split("(", 1)[0] for c in self.calls]
+
+    @property
+    def searches(self) -> list[str]:
+        return [s for t in self.turns for s in t.searches]
+
+    @property
     def discovered(self) -> list[str]:
         return list(dict.fromkeys(d for t in self.turns for d in t.discovered))
 
@@ -959,10 +1124,19 @@ def _short(value: Any, n: int = 60) -> str:
     return text if len(text) <= n else text[: n - 3] + "..."
 
 
-def call_label(block: Any) -> str:
-    args = ", ".join(f"{k}={_short(v, 28)}" for k, v in (block.input or {}).items())
+def call_label(block: Any, width: int = 28) -> str:
+    args = ", ".join(f"{k}={_short(v, width)}" for k, v in (block.input or {}).items())
     tag = " [from code]" if getattr(block, "caller", None) and getattr(block.caller, "type", "direct") != "direct" else ""
     return f"{block.name}({args}){tag}"
+
+
+def print_turn(turn: Turn, indent: str = "    ") -> None:
+    print(f"{indent}turn {turn.n}  {turn.stop_reason:<9} prompt {turn.prompt:>6,} = read {turn.cache_read:>6,} + write "
+          f"{turn.cache_write:>5,} + uncached {turn.input_tokens:>4,}   out {turn.output_tokens:>4,}")
+    for q, found in zip(turn.searches, [turn.discovered] + [[]] * len(turn.searches)):
+        print(f"{indent}        search {q!r} -> {', '.join(found) or 'nothing'}")
+    for c in turn.calls:
+        print(f"{indent}        call   {c}")
 
 
 def run_agent(client: Any, *, system: str | list, tools: list[dict], messages: list[dict],
@@ -970,7 +1144,10 @@ def run_agent(client: Any, *, system: str | list, tools: list[dict], messages: l
               max_tokens: int = 4000, betas: list[str] | None = None, cache: bool = True, container: str | None = None,
               trace: bool = True, extra: dict | None = None) -> RunResult:
     """One loop for every lab: direct tool calls, tool search, programmatic calls (results-only messages with the
-    container id), pause_turn, max_tokens retries and refusals - and a per-turn trace of tokens and cache reads."""
+    container id), pause_turn, max_tokens retries and refusals - and a per-turn trace of tokens and cache reads.
+
+    Caching: an explicit breakpoint on the system prompt (tools + system, shared by every conversation) plus top-level
+    automatic caching for the conversation tail."""
     if cache and isinstance(system, str):
         system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
     api = client.beta.messages if betas else client.messages
@@ -999,7 +1176,7 @@ def run_agent(client: Any, *, system: str | list, tools: list[dict], messages: l
             if b.type == "tool_use":
                 turn.calls.append(call_label(b))
             elif b.type == "server_tool_use" and b.name.startswith("tool_search"):
-                turn.searches.append(json.dumps(b.input))
+                turn.searches.append(search_input(b))
             elif b.type == "server_tool_use" and b.name == "code_execution":
                 turn.code.append(b.input.get("code", ""))
             elif b.type == "tool_search_tool_result":
@@ -1007,9 +1184,7 @@ def run_agent(client: Any, *, system: str | list, tools: list[dict], messages: l
                 turn.discovered += [ref.tool_name for ref in refs]
         turns.append(turn)
         if trace:
-            extra_info = "; ".join(turn.calls + [f"search {s}" for s in turn.searches] + [f"discovered {', '.join(turn.discovered)}"] * bool(turn.discovered))
-            print(f"    turn {n}: {r.stop_reason:<10} prompt={turn.prompt:>6,} (cache_read={turn.cache_read:,} write={turn.cache_write:,} "
-                  f"uncached={turn.input_tokens:,}) out={turn.output_tokens:,}  {extra_info}")
+            print_turn(turn)
         if r.stop_reason == "refusal":
             status = "refused"
             break
@@ -1041,14 +1216,18 @@ def run_agent(client: Any, *, system: str | list, tools: list[dict], messages: l
     return RunResult(status, reply, messages, turns, container, responses)
 
 
-def trace_table(turns: list[Turn]) -> None:
-    table([[t.n, t.stop_reason, t.prompt, t.cache_read, t.cache_write, t.input_tokens, t.output_tokens, money(t.cost),
-            "; ".join(t.calls + [f"search {s}" for s in t.searches])[:70]] for t in turns],
-          ["turn", "stop", "prompt", "cache read", "cache write", "uncached", "out", "cost", "calls"])
+def outcome(run: RunResult, needs: Iterable[str]) -> str:
+    """done: every needed tool was called and nothing escalated; escalated; partial: something needed was never called."""
+    called = set(run.called)
+    if "escalate_to_human" in called:
+        return "escalated"
+    if run.status != "done":
+        return run.status
+    return "done" if set(needs) <= called else "partial"
 
 
 # ------------------------------------------------------------------------------------ task sets
-# Lab 02 - discovery: natural requests -> the one catalog tool that answers them (all non-core, so all deferred).
+# Lab 02 - discovery: natural requests -> the one catalog tool that answers them (none of them is a core tool).
 DISCOVERY_TASKS: list[tuple[str, str]] = [
     ("Where is order SO-10303 right now? Give me the carrier scan history for tracking NLF9028150109.", "track_shipment"),
     ("Which carrier and ETA are recorded on shipment SH-50283?", "get_shipment"),
@@ -1061,10 +1240,9 @@ DISCOVERY_TASKS: list[tuple[str, str]] = [
     ("What is the replenishment lead time for MS-100-R?", "get_lead_time"),
     ("Quote carriers for 380 kg from WH-EU to ES with express service.", "get_carrier_rates"),
     ("Book a carrier pickup at SITE-1005-A on 2026-09-22 for 2 pieces.", "schedule_pickup"),
-    ("Is invoice AR-90257 paid, and what is its due date?", "get_invoice"),
     ("What is the outstanding balance of C-1014 and how many days past due are they?", "get_account_balance"),
-    ("Waive the late fees on invoice AR-90257; the delay was ours.", "apply_late_fee_waiver"),
-    ("Record a payment of $8,188 received against AR-90237, bank reference BW-5521.", "record_payment"),
+    ("Waive the late fees on invoice AR-90244; the delay was ours.", "apply_late_fee_waiver"),
+    ("Record a payment of $8,188 received against AR-90257, bank reference BW-5521.", "record_payment"),
     ("Open a return authorisation for 1 KP-250-S on SO-10248, reason code defective.", "create_rma"),
     ("What restocking fee applies to returning 2 MS-250 with reason code no_longer_needed?", "get_restocking_fee"),
     ("Show the inspection findings for the units received under RMA-7001.", "get_rma_inspection"),
@@ -1082,47 +1260,92 @@ DISCOVERY_TASKS: list[tuple[str, str]] = [
     ("Post to the quality Teams channel that the PS-2608-B hold is in place.", "post_teams_message"),
     ("Contacts at C-1002 with their roles, emails and phone numbers.", "list_contacts"),
     ("Configurable options - voltage, protocol, enclosure - of the KC-2 controller SKU.", "get_configuration_options"),
+    ("What credit limit does C-1014 have, and how much of it is still available?", "get_credit_limit"),
 ]
 
-# Lab 03 - the wide agent: each task needs at least one tool outside the core set.
+# Lab 03 - the wide agent: each task needs at least one tool outside the nine core tools.
 WIDE_TASKS: list[dict] = [
-    {"id": "W1", "text": "Where is the shipment for SO-10248? The consignee says the carrier has not scanned it since Friday.",
+    {"id": "W1", "text": "Where is the shipment for SO-10290? The customer says the carrier has not scanned it since Friday.",
      "needs": ["list_shipments_for_order", "track_shipment"]},
-    {"id": "W2", "text": "KP250-2608-0002 keeps showing fault code F17. Decode F17 for the KC-2 family; then check whether the unit is still under warranty.",
+    {"id": "W2", "text": "KC2-2608-0001 at Lumen Data Centers keeps logging F17. What does F17 mean on a KC-2, and is the unit "
+                         "still under warranty?",
      "needs": ["decode_fault_code", "check_warranty"]},
     {"id": "W3", "text": "List every unit built with seal lot PS-2608-B and the customer each one shipped to.",
      "needs": ["list_units_by_lot"]},
-    {"id": "W4", "text": "Ticket SVC-4021 needs a seal_replacement visit. Find engineers free in US-EAST between 2026-09-21 and 2026-09-25 with that skill; then book the first free slot for the ticket.",
+    {"id": "W4", "text": "Ticket SVC-4021 needs a seal_replacement visit. Find engineers free in US-EAST between 2026-09-21 and "
+                         "2026-09-25 with that skill; then book the first free slot for the ticket.",
      "needs": ["get_engineer_availability", "schedule_field_visit"]},
-    {"id": "W5", "text": "Is invoice AR-90257 overdue? If the customer is past due, waive the late fees on that invoice - the late delivery was our fault.",
-     "needs": ["get_invoice", "apply_late_fee_waiver"]},
+    {"id": "W5", "text": "Invoice AR-90244 is overdue because our delivery was late. Waive the late fees on it, then tell me the "
+                         "open amount and the due date.",
+     "needs": ["apply_late_fee_waiver", "get_invoice"]},
 ]
 
-# Lab 04 - one conversation, three phases, each needing a different slice of the catalog.
+# Lab 04 - one conversation in phases; the application (not the model) decides which tools each phase exposes.
 PHASES: list[dict] = [
-    {"name": "diagnose", "domain": "fleet", "tools": ["get_fault_codes", "decode_fault_code", "get_pump_telemetry"],
-     "turns": ["KC2-2608-0001 at Lumen Data Centers keeps logging F17. Pull the fault codes of the last 7 days; then decode F17 for the KC-2 family."]},
-    {"name": "schedule", "domain": "field_service", "tools": ["create_service_ticket", "get_engineer_availability", "schedule_field_visit"],
+    {"name": "diagnose", "tools": ["get_fault_codes", "decode_fault_code", "get_pump_telemetry"],
+     "turns": ["KC2-2608-0001 at Lumen Data Centers keeps logging F17. Pull its fault codes for the last 7 days and decode F17 "
+               "for the KC-2 family."]},
+    {"name": "schedule", "tools": ["create_service_ticket", "get_engineer_availability", "schedule_field_visit"],
      "turns": ["Open a P2 service ticket for site SITE-1012-A, customer C-1012: KC-2 board fault F17 under recall RC-2026-03. "
                "Then find engineers in US-EAST with the controller_firmware skill free between 2026-09-21 and 2026-09-25.",
                "Book the first free slot with that engineer for the ticket."]},
-    {"name": "communicate", "domain": "communications", "tools": ["notify_account_manager", "post_teams_message"],
-     "turns": ["Notify the account manager of C-1012 with a summary of the plan, and post a short update to the field-service Teams channel."]},
+    {"name": "communicate", "tools": ["notify_account_manager", "post_teams_message"],
+     "turns": ["Notify the account manager of C-1012 with a summary of the plan, and post a short update to the field-service "
+               "Teams channel."]},
+    {"name": "diagnose", "tools": ["get_fault_codes", "decode_fault_code", "get_pump_telemetry"],
+     "turns": ["One more thing before I call them: decode fault code F05 for the KC-1 family."]},
 ]
-PHASE_FOLLOW_UP = "One more thing: decode fault code F05 for the KC-1 family."
+RECALL_STATUS_TURN = "Is KC2-2608-0001 already scheduled under recall RC-2026-03?"
+
+
+# Lab 05 - the recall campaign's 11 affected units.
+@lru_cache(maxsize=1)
+def campaign() -> dict:
+    return _load(ADV_DATA / "recall" / "campaign.json")
+
+
+def recall_units() -> list[dict]:
+    return _load(ADV_DATA / "recall" / "affected_units.json")["units"]
+
+
+TRIAGE_RULE = ("Triage rule: P1 = seal chamber above 70 C and (vibration trend rising or safety duty); P2 = seal chamber above "
+               "70 C, or a KC-2 controller with 5 or more F17 faults in the last 7 days; P3 = everything else. Look at the 7-day "
+               "vibration trend only for units above 70 C.")
+
+
+def triage_question() -> str:
+    lines = [f"{u['serial_number']:<16} {u['sku']:<9} {u['region']:<8} {u['risk_class']}" for u in recall_units()]
+    return (f"Recall RC-2026-03 covers these {len(lines)} units (serial, SKU, region, risk class):\n" + "\n".join(lines) + "\n\n"
+            "Check every one: the latest seal-chamber temperature for the pumps (KP-...), the fault codes of the last 7 days "
+            "for the KC-2 controllers. " + TRIAGE_RULE + " Give me the triage table.")
+
+
+KITS_QUESTION = ("Now the remedy kits: MS-250-R for the KP-250-S, MS-100-R for the KP-100-S, KC-2-PSB for the KC-2. Regions ship "
+                 "from US-EAST -> WH-EAST, US-WEST -> WH-WEST, EU -> WH-EU. How many kits of each do we need per warehouse "
+                 "for all the units, and where is stock short?")
+
+
+# Lab 06 - the bulletin request (facts from the campaign notice).
+def bulletin_request() -> str:
+    lots = campaign()["lots"]
+    facts = [f"{lot}: hazard: {v['hazard']} | remedy: {v['remedy']} | interim: {v['interim']}" for lot, v in lots.items()]
+    return ("Draft technical safety bulletin TSB-2026-09 for operators about recall RC-2026-03 and save it with "
+            "draft_bulletin. Facts per lot:\n" + "\n".join(facts))
+
 
 # Lab 07 - selection eval: 12 tools with near-duplicates, 30 tasks, two description sets.
 SELECTION_TOOLS = ["get_order", "get_order_status_history", "list_shipments_for_order", "get_shipment", "track_shipment", "get_invoice",
-                   "issue_refund", "issue_credit_note", "apply_late_fee_waiver", "check_return_eligibility", "create_rma", "escalate_to_human"]
+                   "issue_refund", "issue_credit_note", "apply_late_fee_waiver", "check_return_eligibility", "create_rma",
+                   "escalate_to_human"]
 
 SELECTION_TASKS: list[tuple[str, str]] = [
     ("Tracking number NLF9028150109 has not had a scan since Friday. Where is the pallet right now?", "track_shipment"),
-    ("Bluewater asks whether NLF9463425003 is out for delivery today.", "track_shipment"),
+    ("Harbor Foods asks whether NLF9463425003 is out for delivery today.", "track_shipment"),
     ("Give me the latest carrier scan for BRL8107534831.", "track_shipment"),
     ("Is NLF7945896356 delayed? They were promised Monday.", "track_shipment"),
     ("Which carrier did we use on shipment SH-50283 and what ETA did we promise?", "get_shipment"),
     ("Pull the ship date and the delivered date of SH-50237.", "get_shipment"),
-    ("What exception reason is recorded on SH-50256?", "get_shipment"),
+    ("What exception reason is recorded on SH-50271?", "get_shipment"),
     ("Did SO-10303 go out as one shipment or as several partials?", "list_shipments_for_order"),
     ("List every shipment we created for SO-10248.", "list_shipments_for_order"),
     ("How many separate shipments were sent for order SO-10272?", "list_shipments_for_order"),
@@ -1132,19 +1355,19 @@ SELECTION_TASKS: list[tuple[str, str]] = [
     ("When did SO-10303 move from confirmed to shipped, and who released it?", "get_order_status_history"),
     ("Give me the full status timeline of SO-10248 with timestamps.", "get_order_status_history"),
     ("Is AR-90257 paid, and when is it due?", "get_invoice"),
-    ("What is the open amount on invoice AR-90237?", "get_invoice"),
+    ("What is the open amount on invoice AR-90267?", "get_invoice"),
     ("Send $2,100 back to Harbor Foods' card for the returned unit on SO-10248 (RMA-7002).", "issue_refund"),
     ("The customer paid twice for SO-10272; return the duplicate $24,564 to their payment method.", "issue_refund"),
     ("Pay back $640 to the original payment method for order SO-10303.", "issue_refund"),
     ("Knock $500 off what Midland owes on AR-90257 for the late delivery - no cash back, just reduce the balance.", "issue_credit_note"),
-    ("Issue a credit against AR-90237 for the damaged seal kit, $640, reducing what they owe.", "issue_credit_note"),
-    ("Reduce invoice AR-90257 by 5% as a goodwill credit; they will pay the rest.", "issue_credit_note"),
-    ("Waive the late fees on AR-90257 - the delay was our fault.", "apply_late_fee_waiver"),
-    ("Bluewater asks us to drop the late-payment charge on invoice AR-90243.", "apply_late_fee_waiver"),
+    ("Issue a credit against AR-90267 for the damaged seal kit, $640, reducing what they owe.", "issue_credit_note"),
+    ("Reduce invoice AR-90257 by 5% as a goodwill credit; they will pay the rest.", "get_invoice"),   # 5% of what? look it up first
+    ("Waive the late fees on AR-90244 - the delay was our fault.", "apply_late_fee_waiver"),
+    ("Meridian asks us to drop the late-payment charge on invoice AR-90250.", "apply_late_fee_waiver"),
     ("Can Harbor Foods return 1 KP-250-S from SO-10248? They no longer need it; what restocking fee applies?", "check_return_eligibility"),
-    ("Is a return still possible for 2 x MS-250 on SO-10303 (wrong item)?", "check_return_eligibility"),
+    ("Is a return still possible for 2 x KV-50-F on SO-10303 (wrong item)?", "check_return_eligibility"),
     ("Open a return authorisation for 1 KP-250-S on SO-10248, reason defective.", "create_rma"),
-    ("Create the RMA for 2 MS-250 seal kits on SO-10303, wrong item ordered.", "create_rma"),
+    ("Create the RMA for 2 KV-50-F valves on SO-10303, wrong item ordered.", "create_rma"),
     ("There is a smell of solvent and a wet seal on KP250-2608-0005 at Keystone - get a person on this now.", "escalate_to_human"),
 ]
 
@@ -1153,49 +1376,41 @@ SELECTION_TASKS: list[tuple[str, str]] = [
 DESCRIPTIONS_B: dict[str, str] = {
     "get_order": "Return one sales order: its lines (SKU, qty, price), current status, promised date, customer PO number, total and the "
                  "IDs of its shipments and invoice. Use for 'what is on this order', 'what did we promise', 'which PO is this'. "
-                 "Order IDs look like SO-10248. Not for the shipment's location (use list_shipments_for_order then track_shipment) "
-                 "and not for the status timeline (use get_order_status_history).",
+                 "Order IDs look like SO-10248. For where a delivery is, use track_shipment; for the status timeline, "
+                 "get_order_status_history.",
     "get_order_status_history": "The dated status timeline of one order: every transition (confirmed, shipped, delivered, on hold, "
                                 "cancelled) with timestamps and the actor who made it. Use when the question is 'when did it move to X' "
-                                "or 'who released/held it'. Order IDs look like SO-10248. Not for current facts (use get_order).",
-    "list_shipments_for_order": "All shipments created for one order, including partial shipments: shipment IDs, carriers, tracking "
-                                "numbers, ship dates, ETAs, delivered dates. Use to find out how many shipments an order has, or to get "
-                                "the tracking number before tracking it. Order IDs look like SO-10248. Not for live carrier events "
-                                "(use track_shipment with the tracking number).",
-    "get_shipment": "One shipment's booking record by shipment ID (SH-50283): carrier, tracking number, ship date, promised ETA, "
-                    "delivered date and any exception reason we recorded. Use for 'which carrier', 'what ETA did we promise', "
-                    "'what exception is on it'. Not for where the parcel is right now (use track_shipment) and not for finding "
-                    "shipments of an order (use list_shipments_for_order).",
-    "track_shipment": "Live carrier tracking for a tracking number (e.g. NLF9028150109): scan history, last scan time and location, "
-                      "whether it is out for delivery, delayed, delivered or stuck at a hub. Use when someone asks where a pallet or "
-                      "delivery is right now, whether it moved or arrived, or why it is late. Needs the carrier tracking number, not an "
-                      "order or shipment ID (get it from list_shipments_for_order or get_shipment).",
+                                "or 'who released/held it'. Order IDs look like SO-10248.",
+    "list_shipments_for_order": "All shipments created for one order, including partial shipments: how many there are, their shipment "
+                                "IDs, carriers and tracking numbers. Use for 'one shipment or several', 'list the shipments of an order', "
+                                "and to find the tracking number before tracking. Order IDs look like SO-10248.",
+    "get_shipment": "One shipment's booking record by shipment ID (SH-50283): the carrier we booked, the ship date, the promised ETA, "
+                    "the delivered date and the exception reason we recorded. Use for 'which carrier did we use', 'what ETA did we "
+                    "promise', 'what exception is recorded'. Takes a shipment ID, not a tracking number.",
+    "track_shipment": "Live carrier tracking for a tracking number (e.g. NLF9028150109): the latest scan, scan history, current "
+                      "location, out for delivery, delayed, delivered or stuck at a hub. Use when someone asks where a pallet or "
+                      "delivery is right now, whether it has moved, is out for delivery or is delayed. Takes the carrier tracking "
+                      "number.",
     "get_invoice": "One invoice by ID (AR-90257): amount, paid amount, open amount, due date, days past due and status. Use for "
-                   "'is it paid', 'when is it due', 'how much is open'. Read-only: it changes nothing. Not for waiving fees or "
-                   "issuing credits.",
-    "issue_refund": "Send money back to the customer's original payment method (card or bank) for an order: 'refund', 'pay back', "
-                    "'return the money', 'they paid twice'. Amount in USD; over $2,500 needs a support manager and over $10,000 the "
-                    "finance director. Irreversible. Not for reducing an open invoice balance without moving money "
-                    "(use issue_credit_note) and not for late fees (use apply_late_fee_waiver).",
-    "issue_credit_note": "Reduce what a customer owes on an invoice without moving money: a credit note against an invoice "
-                         "(AR-90257), e.g. 'knock $500 off', 'goodwill credit', 'credit them for the damaged kit'. Amount in USD or "
-                         "computed from a percentage. Needs approval. Not for sending cash back (use issue_refund) and not for "
-                         "late fees (use apply_late_fee_waiver).",
-    "apply_late_fee_waiver": "Cancel the late-payment fees or charges on an overdue invoice (AR-90257) when the delay was ours or "
-                             "as goodwill: 'waive the late fee', 'drop the late-payment charge'. Only touches fees, never the "
-                             "invoice amount (use issue_credit_note for that).",
+                   "'is it paid', 'when is it due', 'how much is open'. Read-only.",
+    "issue_refund": "Send money back to the customer's card or bank - the original payment method - for an order: 'refund', 'pay back', "
+                    "'send back', 'return the money', 'they paid twice'. Amount in USD; over $2,500 needs a support manager and over "
+                    "$10,000 the finance director. Irreversible: money leaves Kestrel.",
+    "issue_credit_note": "Reduce what a customer owes on an invoice (AR-90257) without moving money: 'knock $500 off', 'goodwill "
+                         "credit', 'credit them', 'reduce the balance or invoice by 5%'. Amount in USD. Needs approval. No cash "
+                         "goes back to the customer.",
+    "apply_late_fee_waiver": "Cancel the late-payment fees or charges on an overdue invoice (AR-90244) when the delay was ours or as "
+                             "goodwill: 'waive the late fee', 'drop the late-payment charge'. Only touches the fees.",
     "check_return_eligibility": "Apply the returns policy to a delivered order line before promising anything: return window, "
-                                "restocking fee, exclusions (configured or special-order items). Use for 'can they return it', "
-                                "'what fee applies', 'is a return still possible'. Needs order ID (SO-10248), SKU (KP-250-S), quantity "
-                                "and a reason code: no_longer_needed, wrong_item, damaged_in_transit, defective, other. Read-only. "
-                                "Not for creating the return (use create_rma).",
+                                "restocking fee, exclusions (configured or special-order items). Use for 'can they return it', 'what "
+                                "fee applies', 'is a return still possible'. Needs order ID (SO-10248), SKU (KP-250-S), quantity and "
+                                "a reason code: no_longer_needed, wrong_item, damaged_in_transit, defective, other. Read-only.",
     "create_rma": "Open a return authorisation (RMA) for delivered units once the return is decided: 'open a return', 'create the "
-                  "RMA'. Needs order ID, SKU, quantity and reason code. Write action, idempotent per line. Not for checking whether a "
-                  "return is allowed (use check_return_eligibility first).",
+                  "RMA'. Needs order ID, SKU, quantity and a reason code. Write action, idempotent per order line.",
     "escalate_to_human": "Hand the conversation to a human queue (billing, logistics, security, quality, field_service, "
                          "account_management) with a priority and a summary; this ends the agent's involvement. Use for safety "
-                         "incidents (leaks, smells, fire, injury: P1), anything the tools cannot do, and approvals above your "
-                         "limits.",
+                         "incidents (leak, smell, smoke, fire, injury: P1), for anything no tool can do, and for approvals above "
+                         "your limits: 'get a person on this'.",
 }
 
 
@@ -1208,14 +1423,18 @@ def tenants() -> dict:
 RISK_RANK = {"read": 0, "write": 1, "irreversible": 2}
 
 
-def scoped_names(role: str) -> list[str]:
-    """Catalog tools a role may see: its domains, at most its risk level, minus denied tools and the always-denied set."""
+def scoped_names(role: str, *, plus: Iterable[str] = ()) -> list[str]:
+    """Catalog tools a role may see: its domains, at most its risk level, minus its denied tools and the set denied to
+    every agent. `plus` adds tools the harness grants every session (for example escalation)."""
     spec = tenants()["roles"][role]
     denied = set(spec.get("denied_tools", [])) | set(tenants()["always_denied_to_agents"])
     domains = spec["domains"]
     out = []
     for t in catalog_tools():
         m = t["meta"]
+        if t["name"] in plus:
+            out.append(t["name"])
+            continue
         if domains != "*" and m["domain"] not in domains:
             continue
         if RISK_RANK[m["risk"]] > RISK_RANK[spec["max_risk"]] or t["name"] in denied:

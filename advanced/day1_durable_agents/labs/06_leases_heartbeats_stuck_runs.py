@@ -18,7 +18,8 @@ Run
 What to observe
     * "leased by another worker": the second worker is refused while the first holds the lease.
     * With heartbeats a 2.5-second tool keeps a 1-second lease alive; without them the lease lapses mid-tool,
-      worker-b takes over, and the log ends up with duplicate tool.result and model.response events.
+      worker-b takes over, and the log ends up with duplicate tool.result and model.response events - while
+      worker-a's own heartbeat() already answered False (the runner ignores the answer: exercise 11 fences it).
     * After the kill the lease is still owned by the dead worker; stuck() is empty until it expires, then
       lists the run; the takeover finishes it with the logged results replayed.
     * The sweeper table: healthy, dead and finished runs, and what it does with each.
@@ -62,6 +63,30 @@ def slow_executor(desk: SupportDesk, *, delay_s: float, heartbeat=None):
         return reads(name, tool_input, ctx)
 
     return execute
+
+
+class HeartbeatLog(RunStore):
+    """The same on-disk store, opened by one worker's process, remembering what heartbeat() answered."""
+
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.answers: list[bool] = []
+
+    def heartbeat(self, run_id: str, owner: str, ttl_s: float = 30.0) -> bool:
+        ok = super().heartbeat(run_id, owner, ttl_s)
+        self.answers.append(ok)
+        return ok
+
+
+def answers_line(answers: list[bool]) -> str:
+    """Compress [True, True, True, False] into 'True x3, False x1'."""
+    runs: list[list] = []
+    for a in answers:
+        if runs and runs[-1][0] == a:
+            runs[-1][1] += 1
+        else:
+            runs.append([a, 1])
+    return ", ".join(f"{a} x{n}" for a, n in runs) or "none"
 
 
 def make_worker(store: RunStore, client, db, ticket, name: str, *, delay_s: float = 0.0, ttl_s: float = 30.0,
@@ -124,7 +149,8 @@ def step_heartbeats(store, client, ticket):
     for heartbeats in (True, False):
         db = memory_db()
         run = store.create("support", input=d1.run_input(ticket), run_id=f"lease-heartbeat-{'on' if heartbeats else 'off'}")
-        a = make_worker(store, client, db, ticket, "worker-a", delay_s=2.5, ttl_s=1.0, heartbeats=heartbeats)
+        a_store = HeartbeatLog(store.path)            # worker-a's own connection, as if it were another process
+        a = make_worker(a_store, client, db, ticket, "worker-a", delay_s=2.5, ttl_s=1.0, heartbeats=heartbeats)
         b = make_worker(store, client, db, ticket, "worker-b", ttl_s=1.0)
         thread, result = in_thread(a, run.id)
         time.sleep(1.6)                                # past the 1-second TTL, inside the 2.5-second tool
@@ -139,10 +165,15 @@ def step_heartbeats(store, client, ticket):
         outcome_a = result.get("outcome")
         print(f"  worker-a finished too: {d1.outcome_line(outcome_a) if outcome_a else result.get('error')}")
         print(f"  log: {event_counts(store, run.id)}")
+        print(f"  worker-a's heartbeat() answers, in order: {answers_line(a_store.answers)}")
         if not heartbeats:
             dup = [e for e in store.events(run.id, types=("tool.result",)) if e["name"] == "get_order"]
             print(f"  get_order results in the log: {len(dup)} - the same tool_use answered twice, and the model "
                   "called twice for the turns after it")
+            print(wrap("worker-a's last heartbeat - before its turn-3 model call - answered False: it could have "
+                       "known it no longer owned the run. DurableRunner does not check the answer, so the zombie "
+                       "logged a second result and paid for a second turn 3. Exercise 11 fences it: stop when the "
+                       "heartbeat fails, and refuse writes from a worker that no longer holds the lease."))
     print(wrap("A false takeover is worse than a slow one: two workers now believe they own the run, both log, "
                "both call the model, both may run the next tool. Rule: TTL is a multiple of the heartbeat "
                "interval (3x is common), and anything that can take longer than the TTL - a slow tool, a long "
@@ -159,6 +190,9 @@ def step_killed(store, client, ticket):
         a.run(run.id)
     except Crash as exc:
         print(f"worker-a: {exc} (kill -9: no release)")
+    else:
+        print("worker-a finished before the crash point (live: the model took a different path) - rerun the lab")
+        return
     record = store.get(run.id)
     print(f"store right after: status={record.status} lease_owner={record.lease_owner} "
           f"lease valid for another {record.lease_until - time.time():.1f} s")
@@ -236,7 +270,7 @@ def main() -> None:
     step(5, "Choosing the numbers")
     print("  heartbeat every h, lease TTL T = 3h, sweeper every S:")
     print("    detection of a dead worker    between T and T + S after its last heartbeat")
-    print("    false takeover                impossible while the worker heartbeats; certain if a step > T runs without them")
+    print("    false takeover                impossible while the worker heartbeats; possible whenever a step > T runs without")
     print("    example                       h = 10 s, T = 30 s, S = 60 s -> a dead worker is resumed within 30-90 s;")
     print("                                  a 45-second ERP call must heartbeat (the tool's job), or T must exceed 45 s")
     print(wrap("A longer TTL means slower recovery; a shorter one means more false takeovers under load (GC pauses, "

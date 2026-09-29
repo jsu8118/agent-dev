@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from advanced.lib.durable import RunStore
 from kestrel.support_agent import run_support_agent
 from kestrel.support_tools import SupportDesk
-from labkit import MODEL, get_client, header, is_mock, mock_api, step, wrap
+from labkit import MODEL, get_client, header, is_mock, step, wrap
 from labkit.data import memory_db
 from labkit.pricing import cost_usd
 
@@ -150,12 +150,12 @@ def step_rebuild(runner, store: RunStore, run, outcome, client, ticket: dict) ->
 
     print("\nThe first course's loop (kestrel.support_agent.run_support_agent) on the same ticket, same request "
           "shape, its own copy of the database:")
-    requests_before = len(mock_api().request_log)
+    requests_before = d1.model_calls()
     desk = SupportDesk(ticket["from_email"], db=memory_db(), ticket_ref=ticket["ticket_id"])
     result = run_support_agent(client, d1.ticket_message(ticket), ticket["from_email"], desk=desk,
                                ticket_ref=ticket["ticket_id"])
     print(f"  turns={result.turns} tools={[c['name'] for c in result.tool_calls]} "
-          f"model calls={len(mock_api().request_log) - requests_before}")
+          f"model calls={d1.model_calls() - requests_before}")
     print(f"  same conversation (ignoring is_error:false and signatures)? {same_conversation(messages, result.messages)}")
     byte_same = d1.transcript_bytes(messages) == d1.transcript_bytes(result.messages)
     print(f"  byte-identical? {byte_same} - first difference: {first_difference(d1.normalise(messages), d1.normalise(result.messages))}")
