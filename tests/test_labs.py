@@ -5,6 +5,7 @@ discovered automatically:
 
     day*/labs/*.py        day*/solutions/*.py        day7_capstone/**/run_*.py
     advanced/day*/labs/*.py   advanced/day*/solutions/*.py   advanced/day7_capstone/**/run_*.py
+    advanced/day*/exercises/*.py      (exercise starters: they must run and print what is left to do)
 
 Per-script directives (in the first 40 lines, as comments):
 
@@ -29,7 +30,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PATTERNS = ["day*/labs/*.py", "day*/solutions/*.py", "day7_capstone/**/run_*.py",
-            "advanced/day*/labs/*.py", "advanced/day*/solutions/*.py", "advanced/day7_capstone/**/run_*.py"]
+            "advanced/day*/labs/*.py", "advanced/day*/solutions/*.py", "advanced/day*/exercises/*.py",
+            "advanced/day7_capstone/**/run_*.py"]
 
 
 def _scripts() -> list[Path]:
