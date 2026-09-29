@@ -108,7 +108,7 @@ import _dayN as dN          # after sys.path.insert(0, str(Path(__file__).resolv
 * Determinism: quoted output must be stable across runs in mock mode. Print wall-clock timings only when the
   lesson needs them, and never quote a timing line in the README as if it were exact.
 * Cost: the metering middleware prints a usage/cost summary at exit for free; don't reimplement it. Read
-  `labkit.LEDGER` when a lab needs totals mid-run (`LEDGER.totals()`; see `labkit/metering.py`).
+  `labkit.LEDGER` when a lab needs totals mid-run (`LEDGER.total_cost`, `LEDGER.total_calls`, `LEDGER.by_model`; see `labkit/metering.py`).
 * Live mode: assume `claude-opus-5` (`labkit.MODEL`) unless the lesson is about a model difference; then name the
   model explicitly (`claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5`, `claude-haiku-4-5`).
 * No network calls other than the Claude client. No paid services. No secrets in files. All example domains
@@ -131,7 +131,7 @@ same docstring/`# test:` conventions as labs and import the exercise's starter w
 | a client | `from labkit import get_client; client = get_client()` (sync) / `get_async_client()` - live if a key is set, else the mock; same `anthropic.Anthropic` class, so every SDK feature works |
 | models | `MODEL` (`claude-opus-5`), `MID_MODEL`, `FAST_MODEL`; `get_spec(model)` gives prices/limits/capabilities; `fallback_kwargs(model, **kw)` adapts thinking/effort kwargs to a model |
 | printing | `header(title)`, `step(n, title)`, `show_message(msg)`, `text_of(msg)`, `print_json(obj)`, `wrap(text)` |
-| cost | `cost_usd(usage, model)`, `usage_summary(usage)`; `LEDGER` (all calls so far) |
+| cost | `cost_usd(usage, model)`, `usage_summary(usage)`; `LEDGER.total_cost`, `LEDGER.total_calls`, `LEDGER.by_model` (all calls so far) |
 | paths | `REPO_ROOT`, `DATA_DIR` (base dataset), `runs_dir(*parts)` (scratch) |
 | tracing | `from labkit.tracing import Tracer` - `with tracer.span("agent.run") as s: ... s.record_llm(response)`; `tracer.render_tree()`, `tracer.export()` |
 | dataset | `from labkit.data import ...` (base course); advanced files: `REPO_ROOT / "advanced" / "data" / ...` |

@@ -76,7 +76,7 @@ a) send a new `user.message` · b) send `user.custom_tool_result` events for the
 **22. (MC)** A coordinator agent's roster may contain:
 a) other coordinators · b) worker agents and `{"type": "self"}`, one delegation level only · c) any agent recursively · d) only agents in the same environment
 
-**23. (Scenario)** Kestrel's recall investigation as one agent hits the context window; as a naive swarm it costs 3× in coordination. Propose a design with numbers you would measure to decide between single agent, self-hosted swarm and hosted swarm.
+**23. (Scenario)** Kestrel's recall investigation as one agent gets 9 of 11 units right — it fails through interference between units in one growing context, not through the context window — and as a naive one-worker-per-unit swarm costs about twice as much with 40% of its tokens spent on coordination. Propose the design you would try next and the numbers you would measure to decide between single agent, self-hosted swarm and hosted swarm.
 
 ## E. Security engineering (Day 5)
 

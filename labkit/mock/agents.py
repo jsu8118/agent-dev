@@ -34,6 +34,7 @@ import httpx2
 from ..config import runs_dir
 from ..models import get_spec, known_model
 from ..pricing import cost_usd
+from .files import get_file_store
 from .errors import ApiError, bad_request
 from .render import next_id
 from .request import MockRequest
@@ -99,6 +100,8 @@ class Session:
     threads: dict[str, Thread] = field(default_factory=dict)
     primary: Thread | None = None
     pending_tool_uses: dict[str, dict] = field(default_factory=dict)   # custom_tool_use event id -> {thread, block}
+    resources: list[dict] = field(default_factory=list)                 # mounted files: {"type": "file", "file_id", "mount_path"}
+    stopped_for_budget: bool = False                                    # the last turn ended with budget_reached
     archived_at: str | None = None
     workdir: Path | None = None
     cost: float = 0.0
@@ -116,7 +119,7 @@ class Session:
             "type": "session", "id": self.id, "title": self.title, "status": self.status,
             "created_at": self.created_at, "updated_at": _ts(), "archived_at": self.archived_at,
             "environment_id": self.environment_id, "agent": _session_agent(self.agent),
-            "resources": [], "metadata": self.metadata, "vault_ids": [], "outcome_evaluations": [],
+            "resources": list(self.resources), "metadata": self.metadata, "vault_ids": [], "outcome_evaluations": [],
             "budget": self.budget, "deployment_id": None,
             "usage": {**self.usage, "list_cost": {"amount": str(int(round(self.cost * 100))), "currency": "USD"},
                       "active_seconds": 0.0},
@@ -211,14 +214,19 @@ class ManagedAgentsMock:
             agent["archived_at"] = _ts()
             return {**public, "archived_at": agent["archived_at"]}
         if action == "versions" and method == "GET":
-            return {"data": [public], "next_page": None}
+            return {"data": list(agent.get("_versions", {}).values()) or [public], "next_page": None}
         if action is None and method == "POST":
+            if body.get("version") is not None and body["version"] != agent["version"]:
+                raise ApiError(409, f"version conflict: the agent is at version {agent['version']}, the update was based on "
+                                    f"version {body['version']}; re-read it and retry", err_type="conflict_error")
             for key in ("name", "description", "system", "tools", "model", "mcp_servers", "skills", "metadata"):
                 if key in body:
                     agent[key] = self._normalize_model(body[key]) if key == "model" else body[key]
             agent["version"] += 1
             agent["updated_at"] = _ts()
-            return {k: v for k, v in agent.items() if not k.startswith("_")}
+            public = {k: v for k, v in agent.items() if not k.startswith("_")}
+            agent.setdefault("_versions", {})[agent["version"]] = dict(public)
+            return public
         if action is None and method == "GET":
             return public
         raise ApiError(404, f"Not found: {method} /v1/agents/{rid}")
@@ -289,6 +297,7 @@ class ManagedAgentsMock:
         agent["_roster"] = [agent if isinstance(m, dict) and m.get("type") == "self" else m for m in roster]
         with self._lock:
             self.agents[agent["id"]] = agent
+        agent["_versions"] = {agent["version"]: {k: v for k, v in agent.items() if not k.startswith("_")}}
         return {k: v for k, v in agent.items() if not k.startswith("_")}
 
     # ------------------------------------------------------------------ environments
@@ -347,6 +356,10 @@ class ManagedAgentsMock:
             if "budget" in body:
                 session.budget = body["budget"]
             self._emit(session, {"type": "session.updated", **{k: body[k] for k in ("title", "metadata", "budget") if k in body}})
+            cap = self._budget_cents(session)
+            if "budget" in body and session.stopped_for_budget and (cap is None or session.cost * 100 < cap):
+                session.stopped_for_budget = False              # room again: the interrupted turn continues
+                self._run_turn(session, [])
             return session.view()
         return session.view()
 
@@ -367,7 +380,15 @@ class ManagedAgentsMock:
             raise bad_request(f"agent: unknown agent {agent_ref!r}")
         if base.get("archived_at"):
             raise bad_request("agent: this agent is archived; new sessions cannot reference it")
-        agent = dict(base)
+        pinned = agent_ref_version = None
+        if isinstance(body.get("agent"), dict):
+            agent_ref_version = body["agent"].get("version")
+        if agent_ref_version is not None and agent_ref_version != base["version"]:
+            snapshot = (base.get("_versions") or {}).get(agent_ref_version)
+            if snapshot is None:
+                raise bad_request(f"agent.version: agent {base['id']} has no version {agent_ref_version}")
+            pinned = {**snapshot, **{k: v for k, v in base.items() if k.startswith("_")}}
+        agent = dict(pinned or base)
         for key, value in overrides.items():
             agent[key] = self._normalize_model(value) if key == "model" else value
         budget = body.get("budget")
@@ -380,6 +401,15 @@ class ManagedAgentsMock:
         primary = Thread(id=next_id("sthread_mock_"), agent=agent, parent_id=None, name=agent["name"])
         session.primary = primary
         session.threads[primary.id] = primary
+        for resource in body.get("resources") or []:              # files from the Files API are mounted into the workspace
+            if resource.get("type") != "file":
+                raise bad_request(f"resources: only file resources are simulated (got {resource.get('type')!r})")
+            stored = get_file_store().get(resource["file_id"])
+            mount_path = resource.get("mount_path") or f"/mnt/session/uploads/{stored.id}"
+            target = session.dir() / mount_path.lstrip("/")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(stored.content)
+            session.resources.append({"type": "file", "file_id": stored.id, "mount_path": mount_path})
         with self._lock:
             self.sessions[session.id] = session
         initial = body.get("initial_events") or []
@@ -421,6 +451,10 @@ class ManagedAgentsMock:
                 if session.status == "idle" and session.pending_tool_uses:
                     raise bad_request("the session is waiting for user.custom_tool_result events (stop_reason "
                                       "requires_action); resolve them before sending a user.message")
+                cap = self._budget_cents(session)
+                if cap is not None and session.cost * 100 >= cap:
+                    raise bad_request("session budget reached (budget_reached); raise the budget with sessions.update before "
+                                      "sending more events")
                 stored = self._emit(session, {"type": "user.message", "content": content})
                 echoed.append(stored)
                 self._run_turn(session, [{"role": "user", "content": content}])
@@ -476,6 +510,7 @@ class ManagedAgentsMock:
             self._emit(session, {"type": "session.thread_status_running", "session_thread_id": thread.id,
                                  "agent_name": thread.name})
         stop = self._loop(session, thread)
+        session.stopped_for_budget = stop.get("type") == "budget_reached"
         thread.status = "idle"
         if thread is not session.primary:
             self._emit(session, {"type": "session.thread_status_idle", "session_thread_id": thread.id,
@@ -491,7 +526,7 @@ class ManagedAgentsMock:
             if cap is not None and session.cost * 100 >= cap:
                 return {"type": "budget_reached"}
             body = {"model": agent["model"]["id"], "max_tokens": 8000, "system": agent.get("system") or "",
-                    "tools": tools, "messages": list(thread.conversation)}
+                    "tools": tools, "messages": list(thread.conversation), "cache_control": {"type": "ephemeral"}}
             if (agent["model"].get("effort") or {}).get("type"):
                 body["output_config"] = {"effort": agent["model"]["effort"]["type"]}
             start = self._emit(session, {"type": "span.model_request_start"})
@@ -624,6 +659,7 @@ class ManagedAgentsMock:
         thread.status = "running"
         self._emit(session, {"type": "session.thread_status_running", "session_thread_id": thread.id, "agent_name": thread.name})
         stop = self._loop(session, thread)
+        session.stopped_for_budget = stop.get("type") == "budget_reached"
         thread.status = "idle"
         self._emit(session, {"type": "session.thread_status_idle", "session_thread_id": thread.id,
                              "agent_name": thread.name, "stop_reason": stop})

@@ -52,7 +52,7 @@
 
 **22. b.** One delegation level: workers plus optionally `self`; a coordinator whose roster contains another coordinator is rejected.
 
-**23.** Measure per architecture on the same 11 units: task success per unit, total cost and cost per unit, coordination tokens (lead reading reports, re-sent prefixes), largest prompt, wall-clock, and failure attribution (which agent failed, from traces). A defensible design: a durable coordinator with a work queue, workers scoped to one unit each with a summary contract, a swarm budget; hosted (Managed Agents) only if the sandbox and state management are worth the loss of control over tools and the per-session cost. Decide with the table, not with the demo.
+**23.** Measure per architecture on the same 11 units: outcomes (units right), cost as run and uncached, cost per success, coordination tokens (briefs, reports, re-sent prefixes), largest prompt, the modelled critical path, and failure attribution (which agent failed, from traces). The design to try next is a durable coordinator with a work queue and **per-customer batches** with a compact report contract — not one worker per unit, which is what multiplied coordination — plus a swarm budget; in the lesson that brings coordination down to about 13% of tokens at roughly the single agent's cost while fixing the interference. Hosted (Managed Agents) only if the sandbox and state management are worth the loss of control over tools and the per-session cost. Decide with the table, not with the demo.
 
 ## E. Security engineering (Day 5)
 

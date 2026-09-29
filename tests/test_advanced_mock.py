@@ -372,3 +372,35 @@ def test_managed_agents_coordinator_threads_and_budget(client):
     assert "hello from the agent" in final.content[0].text
     with pytest.raises(anthropic.BadRequestError, match="one level"):
         client.beta.agents.create(name="grand", model=OPUS, multiagent={"type": "coordinator", "agents": [lead.id]})
+
+
+def test_managed_agents_versions_mounts_budget_resume_and_cached_history(client):
+    import anthropic
+    from labkit import runs_dir
+    long_system = "<test_managed>\n" + ("Kestrel recall context line. " * 220)         # well over the cacheable minimum
+    agent = client.beta.agents.create(name="Desk", model=OPUS, system=long_system,
+                                      tools=[{"type": "custom", "name": "lookup_order", "description": "Look up an order",
+                                              "input_schema": {"type": "object", "properties": {"order_id": {"type": "string"}}}}])
+    v2 = client.beta.agents.update(agent.id, description="second version")
+    assert v2.version == 2 and len(list(client.beta.agents.versions.list(agent.id))) == 2
+    with pytest.raises(anthropic.ConflictError):                                   # an update based on a stale version
+        client.beta.agents.update(agent.id, description="stale", extra_body={"version": 1})
+    env = client.beta.environments.create(name="lab")
+    upload = client.files.upload(file=("units.json", b'[{"serial": "KP250-2608-0002"}]', "application/json"))
+    session = client.beta.sessions.create(agent={"type": "agent", "id": agent.id, "version": 1}, environment_id=env.id,
+                                          resources=[{"type": "file", "file_id": upload.id, "mount_path": "/workspace/units.json"}],
+                                          budget={"type": "limit", "max_list_cost": {"amount": "1", "currency": "USD"}})
+    assert session.agent.version == 1                                              # pinned to the requested version
+    assert (runs_dir("mock_sessions", session.id) / "workspace" / "units.json").read_bytes().startswith(b"[{")
+    assert session.resources[0].file_id == upload.id
+    client.beta.sessions.events.send(session.id, events=[{"type": "user.message", "content": [{"type": "text", "text": "Where is SO-10303?"}]}])
+    use = next(e for e in client.beta.sessions.events.list(session.id) if e.type == "agent.custom_tool_use")
+    client.beta.sessions.events.send(session.id, events=[{"type": "user.custom_tool_result", "custom_tool_use_id": use.id,
+                                                          "content": [{"type": "text", "text": "shipped"}]}])
+    idle = [e for e in client.beta.sessions.events.list(session.id) if e.type == "session.status_idle"][-1]
+    assert idle.stop_reason.type == "budget_reached"                               # one cent does not buy a second call
+    with pytest.raises(anthropic.BadRequestError, match="budget"):
+        client.beta.sessions.events.send(session.id, events=[{"type": "user.message", "content": [{"type": "text", "text": "more"}]}])
+    resumed = client.beta.sessions.update(session.id, budget={"type": "limit", "max_list_cost": {"amount": "5000", "currency": "USD"}})
+    final = [e for e in client.beta.sessions.events.list(session.id) if e.type == "session.status_idle"][-1]
+    assert final.stop_reason.type == "end_turn" and resumed.usage.cache_read_input_tokens > 0     # the history was cached

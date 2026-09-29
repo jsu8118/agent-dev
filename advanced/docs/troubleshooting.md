@@ -50,6 +50,7 @@ the advanced surfaces produce — in the real API and, identically, in the mock.
 | 400 `... one level` | a coordinator's roster contains a coordinator | rosters hold workers and `{"type": "self"}` only |
 | `session.status_idle` with `budget_reached` | the session's `max_list_cost` was hit | raise the budget or start a new session |
 | 400 `session is archived (read-only)` | events sent to an archived session | create a new session |
+| a Managed Agents `events.stream()` never yields `session.usage` | SDK 1.8's typed stream drops event types it does not know | read usage from `sessions.retrieve(id).usage` or from `events.list(id)` |
 
 ## Durable runtime and the capstone
 
