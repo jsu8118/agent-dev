@@ -82,13 +82,15 @@ def place_breakpoints(blocks: list[dict], gap: int, slots: int) -> list[dict]:
 
 def main() -> None:
     starter.schedule, starter.place_breakpoints = schedule, place_breakpoints
-    print("Exercise 12 (solution)")
     starter.main()
+    if is_mock():
+        print(f"[mock] A pre-warm's entry becomes readable {starter.READY_DELAY} s after it starts - the stand-in for "
+              "time to first token. Live, wait for the max_tokens=0 response itself: it returns after prefill.")
     client = get_client()
     try:
         starter.lookback_case(client, 60, place_breakpoints)
     except ValueError as exc:
-        print(f"60 blocks: {exc}")
+        print(f"A turn that appends 60 blocks: {exc}")
 
 
 if __name__ == "__main__":

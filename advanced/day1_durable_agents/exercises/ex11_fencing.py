@@ -1,16 +1,16 @@
 """Exercise 11 starter - fence the zombie: a worker that lost its lease must stop writing.
 
 Lab 06's false takeover: worker-a runs a tool slower than its lease without heartbeating, worker-b takes the
-run over and finishes it, and worker-a - still alive - comes back, logs a second tool result and pays for a
-second model turn. Its own heartbeat() had already answered False. Write, WITHOUT editing
-advanced/lib/durable.py:
+run over and finishes it, and worker-a - still alive - comes back and logs a second result for the same tool
+call. The runtime stops it at its next heartbeat (LeaseLost), but that check comes AFTER the write. Write,
+WITHOUT editing advanced/lib/durable.py:
 
   * FencedStore(RunStore), bound to one worker (owner=...): append() and set_status() succeed only while that
     worker holds the run's lease - checked and written in ONE statement, so nothing can slip in between - and
-    heartbeat() raises LeaseLost instead of answering False.
+    raise LeaseLost (advanced.lib.durable's) when it does not.
 
-The DurableRunner then stops at the zombie's first write after the takeover. This starter runs the takeover
-with a FencedStore that does not fence yet and prints the duplicates.
+The DurableRunner then stops at the zombie's first write after the takeover, and that write never lands. This
+starter runs the takeover with a FencedStore that does not fence yet and prints the duplicate.
 Run: python advanced/day1_durable_agents/exercises/ex11_fencing.py
 Solution: advanced/day1_durable_agents/solutions/ex11_fencing.py
 """
@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "labs"))
 
-from advanced.lib.durable import RunStore  # noqa: E402
+from advanced.lib.durable import LeaseLost, RunStore  # noqa: E402,F401  (LeaseLost: for your FencedStore)
 from kestrel.support_tools import SupportDesk  # noqa: E402
 from labkit import get_client, header  # noqa: E402
 from labkit.data import memory_db  # noqa: E402
@@ -33,12 +33,9 @@ from labkit.data import memory_db  # noqa: E402
 import _day1 as d1  # noqa: E402
 
 
-class LeaseLost(Exception):
-    """This worker no longer holds the run's lease: stop, and write nothing more."""
-
-
 class FencedStore(RunStore):
-    """TODO: fence append() and set_status() on lease ownership, and raise LeaseLost from a failed heartbeat()."""
+    """TODO: fence append() and set_status() on lease ownership: a write by a worker that lost the lease raises
+    LeaseLost and changes nothing."""
 
     def __init__(self, path, *, owner: str) -> None:
         super().__init__(path)
@@ -70,7 +67,7 @@ def false_takeover(client, store_cls, store_name: str) -> dict:
     def run_a():
         try:
             result["worker-a"] = d1.outcome_line(a.run(run.id))
-        except Exception as exc:                                    # LeaseLost, once you have written it
+        except Exception as exc:                                    # LeaseLost: from the runtime or your fence
             result["worker-a"] = f"stopped: {type(exc).__name__}: {exc}"
 
     thread = threading.Thread(target=run_a)
@@ -90,9 +87,9 @@ def main() -> None:
     header("Exercise 11 - fencing a zombie worker (starter)")
     for key, value in false_takeover(client, FencedStore, "ex11_starter").items():
         print(f"  {key:<18} {value}")
-    print("\nTODO: the log has 4 model responses and 2 results for the same get_order: worker-a wrote after it lost")
-    print("      the run. Make FencedStore refuse those writes, so that the log ends with 3 model responses, one")
-    print("      get_order result, and worker-a 'stopped: LeaseLost'.")
+    print("\nTODO: the log has 2 results for the same get_order: worker-a wrote one after it lost the run, and only")
+    print("      its next heartbeat stopped it. Make FencedStore refuse that write, so that the log ends with one")
+    print("      get_order result and worker-a stopped by the fence: 'stopped: LeaseLost: worker-a may not write ...'.")
 
 
 if __name__ == "__main__":

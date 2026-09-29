@@ -352,8 +352,8 @@ def main() -> None:
     client = get_client()
     header("Lab 03 - Preserved thinking: binding, drops and a compatible harness")
     if is_mock():
-        print("(mock mode: signatures are HMACs over the producing model and the prefix digest; Fable 5.1 enforces the "
-              "check like a new account, Opus 5.5 records it like an older one, Opus 5 has none)")
+        print("[mock] Signatures are HMACs over the producing model and the prefix digest; Fable 5.1 enforces the "
+              "check like a new account, Opus 5.5 records it like an older one, Opus 5 has none.")
 
     step(1, "Three turns on each model")
     convs = {m: conversation(client, m) for m in (FABLE, OPUS55, OPUS5)}

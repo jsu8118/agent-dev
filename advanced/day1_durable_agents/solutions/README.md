@@ -19,13 +19,13 @@ log does not have yet.
 | a. `model.response(turn 3, issue_refund)` last | replays turns 1-2's results (already in the rebuilt messages), executes `issue_refund` (it never started), calls the model for turn 4 | nothing: the refund never started before |
 | b. `tool.started(issue_refund)` last, effect `started` | executes the tool again; inside it `ctx.effect()` reports **in flight**, so it asks the refund API by key: found -> commits that result; not found -> issues it now, same key; then turn 4 | nothing - *because* the key went downstream and the API honours it within its window. Without the key: a second refund (lab 03, step 1) |
 | c. `tool.result(issue_refund)` last | replays all three results, executes nothing, calls the model for turn 4 | nothing |
-| d. `model.response(turn 4, end_turn)` last, status `running` | the shipped `DurableRunner` rebuilds a conversation that ends with the assistant's answer and calls the model with it: an assistant prefill, which current models reject with a **400**. Finish it from the log instead (`FinishingRunner` in `labs/_day1.py`): 0 model calls, the logged reply | the customer email, if sending it is a separate step without a key; put it in an outbox keyed by the run id |
-| e. `approval.decided(approved)`, `run.status(pending)`, consumer calls `run()` | `run()` sees `issue_refund` without a result and executes it *without* the approval flag: the gate raises `ApprovalRequired` again and the run parks on a **new** approval. The manager's decision is ignored (lab 05, step 3) | a second approval request in the manager's queue; nothing is refunded. Route decided runs to `resume_after_decision()` |
+| d. `model.response(turn 4, end_turn)` last, status `running` | the answer is already in the log: the last logged turn has no tool call, so `run()` marks the run completed with the logged reply - **0 model calls** (lab 02, the last row of step 2). Calling the model instead would send a conversation that ends with the assistant's answer: a prefill, which current models reject with a 400 | the customer email, if sending it is a separate step without a key; put it in an outbox keyed by the run id |
+| e. `approval.decided(approved)`, `run.status(pending)`, consumer calls `run()` | before the loop, `run()` answers the settled approval: `issue_refund` executes once with `_approved: True`, as an effect keyed `<run>:<tool_use>:approved`, and its result is logged; the model then writes the reply (lab 05, step 3) | nothing: a second `run()` finds the result in the log, and the key covers a crash inside the refund. (A runtime that did not answer decisions itself re-executed the gated call *without* the approval: the gate asked again and the manager's decision was ignored - lab 05 shows that too) |
 | f. only `run.created`, `run.status(running)` | rebuilds `[user message]` and calls the model for turn 1 | the model call: the 529 was an overload refusal, but the request that timed out on the client may still have been processed - and billed - by the server (a timed-out request is not a cancelled one), and the resumer generates turn 1 again. Model calls are at-least-once; harmless except for cost, because no tool ran |
 
 The pattern: tool execution is at-most-once *from the log's point of view* (a) - (c). Anything the log cannot see
-needs its own guard: a downstream system that received the call (b), a step outside the loop (d), a queue consumer
-that ignores approvals (e), a response that never reached the log (f).
+needs its own guard: a downstream system that received the call (b), a step outside the loop (d), a decision made
+outside the run, which `run()` must answer before the loop continues (e), a response that never reached the log (f).
 
 ## 2. "Exactly-once" claims
 
@@ -114,10 +114,14 @@ b. 63 deploys x 0.101 = **6.3 in-flight runs killed per month** (a given deploy 
 c. After a `kill -9` the lease runs out 30 s after the last heartbeat and the sweeper sees it within the next
    60 s: **30 to 90 s**. A graceful SIGTERM (stop taking work, finish or abandon the current step, release the
    lease) lets the next poll take the run at once.
-d. 1,900 x 60% x 0.2% = **2.3 false takeovers per month**. Each re-generates the rest of the run (two workers
-   pay for the same turns), and - live - the second worker's model responses carry **different tool_use ids**,
-   so every later write gets a *different* idempotency key and can happen twice. (The mock's ids are
-   deterministic, which hides this; lab 06 notes it.)
+d. 1,900 x 60% x 0.2% = **2.3 false takeovers per month**. Each costs little in tokens: the new owner runs the
+   in-flight `get_order` again (a read), and the zombie logs a duplicate result when its slow call returns, then
+   stops with `LeaseLost` at its next heartbeat - before it calls the model again (lab 06, step 2). The risk is
+   the rest of the zombie's tool round, which runs before that heartbeat: it answers the same tool_use ids as the
+   new owner, so keyed writes collide on their key, but an unkeyed write happens twice. Key every write and fence
+   the store (exercise 11). A runtime that ignores the heartbeat's answer is far worse: the zombie runs on, two
+   workers pay for the same turns, and - live - their turns carry different tool_use ids, so every later write
+   gets a different key and can happen twice.
 e. The requirements force TTL > 60 s (no takeover during a 60 s step without heartbeats) and TTL + sweep <=
    120 s: **TTL 75 s, sweep every 30 s, heartbeat every 25 s** gives 75-105 s. The better answer changes the
    premise: heartbeat from inside the slow tool (`ctx.store.heartbeat(...)` every 10 s), keep TTL 30 s, and
@@ -189,10 +193,12 @@ Rejected: two-phase commit (the ERP, the carrier and the billing system offer no
   for the new amount (one click in the UI can do both). The run resumes with the approved amount, the model tells
   the customer that amount, and the audit shows both.
 * **SLA ladder** (business hours): at 4 h page the approver's backup (keyed, once); at 1 business day send the
-  customer a holding reply (once); at 3 business days *expire* - the run resumes with an "expired" tool error,
-  the model escalates and tells the customer it is overdue, not refused (lab 05, step 5; exercise 10).
-* **How the decision reaches the run:** the UI calls `decide()` (first decision wins), the run returns to
-  `pending`, the dispatcher routes it to `resume_after_decision()`, and the approved action runs as a keyed effect.
+  customer a holding reply (once); at 3 business days *expire* (`store.expire()`) - the run resumes with a "not
+  decided in time" tool error, the model escalates and tells the customer it is overdue, not refused (lab 05,
+  step 5; exercise 10).
+* **How the decision reaches the run:** the UI calls `decide()` (a conditional update: the first decision wins),
+  the run returns to `pending`, the next worker's `run()` answers the decision before the loop continues, and the
+  approved action runs as a keyed effect.
 
 | option | verdict |
 |---|---|
@@ -256,8 +262,9 @@ checkpoint:
 * **Checkpoints without editing the runtime:** a wrapped client checks before every model call (no tokens are
   spent after a cancel), and the runner's own hook points (`_maybe_crash` at after_model, before_tool,
   after_tool) check around every tool. A tool already running finishes; the log records its result.
-* **Parked runs:** pending approvals are closed as rejected with the reason, and `resume_after_decision()`
-  refuses to execute an approved action of a cancelled run.
+* **Parked runs:** pending approvals are closed as rejected, with the cancel in the note (the public API settles
+  an approval as approved, rejected or expired). The runner also checks before `run()` answers a settled
+  approval (`_answer_decided`, where an approved action executes), so a cancelled run never executes one.
 * **What cancel does not do:** undo. `run.cancelled` lists the tools that completed; compensating them is a saga's
   job (lab 04) or a person's. Cancelling twice, or cancelling a finished run, changes nothing (scenario d: one
   request logged, a completed run stays completed). A cancel that arrives after the run's last checkpoint loses the
@@ -270,38 +277,40 @@ checkpoint:
 ```
   +4 h  host-1: escalate apr-A -> PG-001
   +4 h  host-1: escalate apr-B -> PG-002
-  +4 h  host-2: escalate apr-A -> skipped: another host has it (done)
-  +4 h  host-2: escalate apr-B -> skipped: another host has it (done)
+  +4 h  host-2: escalate apr-A -> skipped: another host already did it
+  +4 h  host-2: escalate apr-B -> skipped: another host already did it
   +2 d  host-1: expire apr-A -> PG-003
   +2 d  host-1: expire apr-B -> skipped: decided by ops.manager since the plan
-  +2 d  host-2: expire apr-A -> skipped: another host has it (done)
+  +2 d  host-2: expire apr-A -> skipped: another host already did it
 ```
 
 Three pages instead of the naive sweeper's seven, apr-B keeps the manager's late approval (and is refunded), and
 apr-A's customer is told it is overdue with an escalation reference; `5/5 checks passed` with the dead-host case
 below.
 
-* **Claim, then act.** One effects-table row per (approval, action). `RunStore.effect_begin` reads before it
-  inserts, so under a true race the loser gets the primary key's `IntegrityError` - which means "taken", not a
-  crash. (A read-then-insert is a race in its own right; the report for this day asks for it to become a single
-  `INSERT OR IGNORE`.)
-* **Re-check right before acting.** A plan is a snapshot of the past. The manager approved apr-B after host-1
-  planned its expiry; the re-check sees a decided approval and leaves it alone. `decide()` is itself a
-  read-then-write, so the solution also re-reads the approval after deciding and backs off if a person got there
-  first.
-* **Key the side effect, and finish what a dead host started.** The page carries the claim's key. A host that
-  dies between its decision and its page leaves an expired approval that nobody announced - and `plan()` only
-  lists *pending* approvals, so the next sweep would never see it. `plan_unfinished()` finds those (an `expired:`
-  decision without an `approval.expired` event); `apply_safely()` meets the claim in flight and pages with the same
-  key, so the pager deduplicates if the first page did go out. Step 3 of the solution:
+* **Claim, then act.** One effects-table row per (approval, action). `RunStore.effect_begin()` is an `INSERT OR
+  IGNORE`, so two hosts racing for the same key get exactly one first attempt; the other finds the claim, done or
+  in flight.
+* **Re-check right before acting, and read back after.** A plan is a snapshot of the past. The manager approved
+  apr-B after host-1 planned its expiry; the re-check sees a decided approval and leaves it alone. `store.expire()`
+  settles only a pending approval (a conditional update), so even a click that lands between the re-check and the
+  expiry wins; the solution reads the approval back and pages only if it is now `expired`.
+* **Key the side effect, and finish what a dead host started.** The page carries the claim's key, and the event
+  that records it is written after the page went out. A host that dies between its expiry and its page leaves an
+  expired approval nobody was told about - and `plan()` only lists *pending* approvals, so the next sweep would
+  never see it. `plan_unfinished()` finds those (status `expired`, no `approval.expiry_paged` event);
+  `apply_safely()` meets the claim in flight and pages with the same key, so the pager deduplicates if the first
+  page did go out. Step 3 of the solution:
 
   ```
     host-1: host-1 died after expiring apr-C, before its page
     pending approvals the next plan() sees: 0; unfinished expiries: 1
     host-2: expire apr-C -> PG-001 (finished a dead host's claim)
   ```
-* **Expiry is not a refusal**: the note says `expired:` and an `approval.expired` event is logged, so reports
-  and the model can tell "nobody decided" from "a manager said no".
+* **Expiry is not a refusal.** `store.expire()` gives the approval its own status, and the run's tool result
+  says "Not decided in time", so reports and the model can tell "nobody decided" from "a manager said no". The
+  naive sweeper's `decide(approved=False)` made the model tell apr-A's customer the refund "could not be approved
+  at this time (no decision within 2 days)" - a refusal nobody gave, and no follow-up.
 
 ## 11. Fencing a zombie worker
 
@@ -316,11 +325,13 @@ below.
   final status       completed
 ```
 
-Unfenced, the same takeover logs four model responses and two results for one `get_order`. The fence is one SQL
-statement per write - `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = ? AND lease_owner =
-?)` - so no other worker can take the lease between the check and the write; `set_status` is fenced the same way,
-and a failed heartbeat raises instead of returning False. `tool.started=3` is expected: worker-a started the slow
-call legitimately, and worker-b started it again after the takeover.
+Unfenced (step 1), the runtime's own check stops the zombie at its next heartbeat - `stopped: LeaseLost: run
+fenced-takeover: lease taken over by another worker; stopping` - but only after it logged a second result for the
+same `get_order` (`get_order results 2`). The fence is one SQL statement per write - `INSERT ... SELECT ... WHERE
+EXISTS (SELECT 1 FROM runs WHERE run_id = ? AND lease_owner = ?)` - so no other worker can take the lease between
+the check and the write, and the zombie's first write after the takeover is refused; `set_status` is fenced the
+same way. `tool.started=3` is expected: worker-a started the slow call legitimately, and worker-b started it
+again after the takeover.
 
 **What fencing cannot prevent:** anything the zombie did *outside* the store while it still believed it held the
 lease - here a repeated read, in general a write to another system. That gap is covered by idempotency keys (the

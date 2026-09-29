@@ -201,14 +201,6 @@ def refunds(db) -> list[dict]:
     return [dict(r) for r in db.execute("SELECT refund_id, amount_usd, approved_by, status FROM refunds")]
 
 
-def decided_but_unanswered(store: RunStore, run_id: str) -> bool:
-    """True when a person decided an approval whose tool call has no logged result yet: such a run must be
-    resumed with resume_after_decision(), not run() - run() would execute the gated tool again and ask again."""
-    answered = {e["tool_use_id"] for e in store.events(run_id, types=("tool.result",))}
-    return any(a["status"] in ("approved", "rejected") and a["action"].get("tool_use_id") not in answered
-               for a in store.approvals(run_id))
-
-
 # ---------------------------------------------------------------------------- a long run (exercises 3 and 12)
 STOCK_AUDIT_SYSTEM = """\
 <adv_day1_stock_audit>
@@ -366,35 +358,3 @@ class KilledWorker(DurableRunner):
             raise
         self.store.release(run_id, self.worker)
         return outcome
-
-
-# ---------------------------------------------------------------------------- finishing a run from its log
-def last_response(store: RunStore, run_id: str) -> dict | None:
-    responses = store.events(run_id, types=("model.response",))
-    return responses[-1] if responses else None
-
-
-class FinishingRunner(DurableRunner):
-    """DurableRunner plus one resume case the shipped runner leaves out: a crash AFTER the final model response
-    was logged but BEFORE the run was marked completed.
-
-    Resuming such a run must not call the model again (the conversation already ends with the answer; sending it
-    back would be an assistant prefill, which current models reject with a 400).  The answer is in the log, so
-    the run is finished from the log.
-    """
-
-    def run(self, run_id: str) -> Outcome:
-        run = self.store.get(run_id)
-        final = last_response(self.store, run_id)
-        if run.status in ("pending", "running") and final is not None and final["stop_reason"] != "tool_use" \
-                and not any(b.get("type") == "tool_use" for b in final["content"]):
-            if not self.store.acquire(run_id, self.worker, self.lease_ttl_s):
-                raise RuntimeError(f"run {run_id} is leased by another worker")
-            try:
-                reply = "".join(b.get("text", "") for b in final["content"] if b.get("type") == "text").strip()
-                self.store.set_status(run_id, "completed", result={"reply": reply, "turns": final["turn"]})
-                messages, _, turns, replayed = self.rebuild(run_id)
-                return Outcome(run_id, "completed", reply=reply, turns=turns, replayed_tools=replayed, messages=messages)
-            finally:
-                self.store.release(run_id, self.worker)
-        return super().run(run_id)

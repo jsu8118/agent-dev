@@ -64,13 +64,6 @@ def approval_worker(store, client, db, name: str):
                              system=d1.APPROVALS_SYSTEM, runner_cls=CancellableRunner)
 
 
-def dispatch(store, runner, run_id):
-    """Lab 05's dispatcher rule."""
-    if d1.decided_but_unanswered(store, run_id):
-        return runner.resume_after_decision(run_id)
-    return runner.run(run_id)
-
-
 def scenario_pending(client) -> dict:
     store, db = d1.fresh_store("ex09_pending"), memory_db()
     run = store.create("support", input=d1.run_input(d1.ticket("T-1206")), run_id="cancel-pending")
@@ -86,7 +79,7 @@ def scenario_waiting(client) -> dict:
     run = store.create("support", input=d1.approvals_input(), run_id="cancel-waiting")
     approval_worker(store, client, db, "worker-a").run(run.id)
     status = cancel(RunStore(store.path), run.id, by="travis.greer (customer)", reason="customer withdrew the request")
-    outcome = dispatch(store, approval_worker(store, client, db, "worker-b"), run.id)
+    outcome = approval_worker(store, client, db, "worker-b").run(run.id)     # a worker picks it up again
     return {"cancel() returned": status, "worker outcome": outcome.status,
             "approvals": [a["status"] for a in store.approvals(run.id)], "refunds": len(d1.refunds(db))}
 

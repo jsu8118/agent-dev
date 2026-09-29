@@ -23,7 +23,8 @@ What to observe
       and the end-of-day report - while the budget arms finish every turn.
     * Per-message effort lowers output on routine turns; the day's bill barely moves because input dominates it.
     * The budget arms print their pacing: output per site falls as the countdown runs down, and the tight budget
-      runs out before Westfield - its end-of-day report is one line.
+      runs out at Westfield - its end-of-day report is one line. The 'output + tool results' column is what a task
+      budget counts, site by site (exercise 7 sizes a budget from it).
     * On Fable 5.1 the progress updates arrive as thinking blocks with text, one before each tool call.
     * The support matrix: Opus 5 rejects display "updates"; Fable 5 rejects per-message effort.
 """
@@ -110,8 +111,16 @@ def arm_row(label: str, day: d3.DayRun) -> list:
     return [label, len(day.turns), len(day.truncated), day.output_tokens, d3.money(day.cost), report_note]
 
 
+def results_per_turn(day: d3.DayRun) -> list[int]:
+    """Tool-result tokens read in each turn: the history split at the technician's messages."""
+    starts = [i for i, m in enumerate(day.messages) if m["role"] == "user" and not (
+        isinstance(m["content"], list) and any(b.get("type") == "tool_result" for b in m["content"]))]
+    bounds = starts[1:] + [len(day.messages)]
+    return [d3.tool_result_tokens(day.messages[a:b]) for a, b in zip(starts, bounds)]
+
+
 def pacing_table(day: d3.DayRun, levels: list[str], budget: int) -> None:
-    rows = []
+    rows, results = [], results_per_turn(day)
     for site in d3.SITE_ORDER:
         turns = [t for t in day.turns if t.site == site]
         if not turns:
@@ -119,8 +128,8 @@ def pacing_table(day: d3.DayRun, levels: list[str], budget: int) -> None:
         idx = [day.turns.index(t) for t in turns]
         out = sum(t.output for t in turns)
         rows.append([site, len(turns), " ".join(LETTER.get(levels[i], "?") for i in idx) if levels else "-",
-                     out, round(out / len(turns))])
-    d3.table(rows, ["site", "turns", "effort per turn", "output", "output/turn"])
+                     out, round(out / len(turns)), out + sum(results[i] for i in idx)])
+    d3.table(rows, ["site", "turns", "effort per turn", "output", "output/turn", "output + tool results"])
     output, results = sum(t.output for t in day.turns), d3.tool_result_tokens(day.messages)
     spent = output + results
     print(f"  Spend the harness can observe: {output:,} output + {results:,} tool-result tokens = {spent:,} of "
@@ -243,8 +252,8 @@ def main() -> None:
     client = get_client()
     header("Lab 01 - Task budgets and per-message effort")
     if is_mock():
-        print("(mock mode: the stand-in's thinking volume follows the effort in force and its pacing follows the "
-              "task budget; token counts are estimates)")
+        print("[mock] The stand-in's thinking volume follows the effort in force and its pacing follows the "
+              "task budget; token counts are estimates.")
 
     step(1, "The day, and the three levers")
     kinds = {}

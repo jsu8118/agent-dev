@@ -247,8 +247,8 @@ def main() -> None:
     client = get_client()
     header("Lab 04 - Turn-scoped system messages")
     if is_mock():
-        print("(mock mode: the stand-in obeys the reminders it can see - system messages that are in force and "
-              "<system-reminder> blocks in the current turn; token counts are estimates)")
+        print("[mock] The stand-in obeys the reminders it can see - system messages that are in force and "
+              "<system-reminder> blocks in the current turn; token counts are estimates.")
 
     step(1, "Placement rules - seven ways to get a 400")
     placements(client)

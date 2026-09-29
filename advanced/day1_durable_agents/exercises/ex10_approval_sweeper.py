@@ -7,11 +7,11 @@ state before either writes. Make it safe WITHOUT editing advanced/lib/durable.py
   * each action (escalate an approval, expire an approval) happens at most once, whichever host gets there first;
   * the page (the notification that wakes the finance director) is keyed, so a retry cannot page twice;
   * an approval a person decided between a sweeper's plan and its apply is left alone - no expiry, no page;
-  * expiry is recorded as expiry ("expired: ..."), not as a manager's refusal.
+  * expiry is recorded as expiry (store.expire(): status "expired"), not as a refusal nobody gave.
 
 The harness below parks two refund runs, lets two hosts plan and then apply at +4 hours and at +2 days (a
-manager approves the second run between the two phases), then dispatches the decided runs. It uses the naive
-plan/apply below and prints what that does.
+manager approves the second run between the two phases), then lets a worker pick up the settled runs. It uses
+the naive plan/apply below and prints what that does.
 Run: python advanced/day1_durable_agents/exercises/ex10_approval_sweeper.py
 Solution: advanced/day1_durable_agents/solutions/ex10_approval_sweeper.py
 """
@@ -120,10 +120,8 @@ def run_campaign(client, apply_fn, store_name: str) -> dict:
     log += [f"+2 d  host-2: {x}" for x in apply_fn(store, pager, plan_2, host="host-2")]
 
     replies = {}
-    for run_id in ("apr-A", "apr-B"):                                  # lab 05's dispatcher rule
-        runner = worker(store, client, db, "worker-b")
-        outcome = runner.resume_after_decision(run_id) if d1.decided_but_unanswered(store, run_id) else runner.run(run_id)
-        replies[run_id] = outcome
+    for run_id in ("apr-A", "apr-B"):              # run() answers each settled approval, then the model replies
+        replies[run_id] = worker(store, client, db, "worker-b").run(run_id)
     return {"store": store, "db": db, "pager": pager, "log": log, "replies": replies}
 
 
@@ -144,10 +142,11 @@ def main() -> None:
     client = get_client()
     header("Exercise 10 - an approval sweeper two hosts can run (starter)")
     report(run_campaign(client, apply, "ex10_starter"))
-    print("\nTODO: apr-A and apr-B were each escalated twice (4 pages at +4 h), apr-A's expiry paged twice, and the")
-    print("      approved apr-B got an 'expired' page it never deserved. Write apply_safely(): one claim per")
-    print("      approval and action, a keyed page, a re-check of the approval right before acting, and an")
-    print("      'expired:' note. Expected: 3 pages in total (escalate A, escalate B, expire A).")
+    print("\nTODO: apr-A and apr-B were each escalated twice (4 pages at +4 h), apr-A's expiry paged twice, the")
+    print("      approved apr-B got an 'expired' page it never deserved, and apr-A's customer was told the refund")
+    print("      'could not be approved' although nobody decided. Write apply_safely(): one claim per approval and")
+    print("      action, a keyed page, a re-check of the approval right before acting, and store.expire().")
+    print("      Expected: 3 pages in total (escalate A, escalate B, expire A) and an 'overdue' reply for apr-A.")
 
 
 if __name__ == "__main__":

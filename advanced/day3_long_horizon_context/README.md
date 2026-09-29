@@ -61,7 +61,7 @@ accounting, context management and thinking-signature checks are real; the "mode
 `advanced/mock_scenarios/day3_long_horizon_context.py` that answer only from what is in the request. Excerpts below are
 mock-mode output. In live mode the numbers and wording differ; the shapes do not. The day is expensive live because
 two labs replay the full day several times (simulated totals: lab 01 about $8.90, lab 02 about $11.60, the other five
-about $9 together); `--turns 14` and `--strategies` cut the first two by two thirds.
+about $7.30 together); `--turns 14` cuts the first two by more than half, and `--strategies` trims lab 02 further.
 
 ---
 
@@ -442,7 +442,7 @@ becomes a list of `{code, count}` items.
 | design | coordinator context at the end | cost |
 |---|---:|---:|
 | stuffed logs | 49,675 | $0.4952 |
-| six readers on Claude Sonnet 5 + coordinator on Claude Opus 5 | 2,259 | $0.1865 |
+| six readers on Claude Sonnet 5 + coordinator on Claude Opus 5 | 2,264 | $0.1867 |
 
 Both answered all six questions - one through a drill-down, because "the heatsink temperature at the latest F05" is not
 in the contract. The gap grows with every turn that follows: each request re-reads the coordinator's context, $0.0248
@@ -590,14 +590,14 @@ The cap cut 3 answers mid-sentence (stop_reason=max_tokens), turns 1, 27, 39 (ar
 ```
 ```
 Task budget 64,000 tokens - sized below what the day needs:
-  site       turns  effort per turn  output  output/turn
-  ---------  -----  ---------------  ------  -----------
-  gbwd           7  M M H L M M L     2,173          310
-  harbor         7  M M M M H L L     1,801          257
-  riverbend      6  M M M M L L       1,170          195
-  cedar          6  M M M M L L       1,158          193
-  cobalt         7  M H M M L H L     1,213          173
-  westfield      7  M M M M L M L       741          106
+  site       turns  effort per turn  output  output/turn  output + tool results
+  ---------  -----  ---------------  ------  -----------  ---------------------
+  gbwd           7  M M H L M M L     2,173          310                 19,169
+  harbor         7  M M M M H L L     1,801          257                 17,887
+  riverbend      6  M M M M L L       1,170          195                  3,192
+  cedar          6  M M M M L L       1,158          193                  2,785
+  cobalt         7  M H M M L H L     1,213          173                 17,897
+  westfield      7  M M M M L M L       741          106                  2,094
   Spend the harness can observe: 8,256 output + 54,768 tool-result tokens = 63,024 of 64,000 (2% left).
 
 Turn 39 under the tight budget:

@@ -12,8 +12,10 @@ Run
     python advanced/day3_long_horizon_context/solutions/ex04_07_calculations.py
 
 What to observe
-    * Exercise 4: one miss at turn 20 costs more than a normal turn; batching or automatic caching removes all six.
-    * Exercise 5: the cheapest cadence is not the most frequent one - each compaction has a price.
+    * Exercise 4: a request that misses the lookback costs several normal turns; batching or automatic caching removes
+      all six misses.
+    * Exercise 5: the cheapest cadence is not the most frequent one - each compaction has a price - and the bottom of
+      the curve is flat.
     * Exercise 6: the keep-alive beats the 1-hour TTL on Fable 5.1 for gaps under an hour.
     * Exercise 7: the budget, and the `remaining` value after each summary reset.
 """
@@ -22,6 +24,7 @@ What to observe
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -55,7 +58,7 @@ def exercise4() -> None:
     print("Exercise 4 - lookback misses after sequential look-up turns (input side, Opus 5)")
     print(f"  normal turn 21: read {context(20):,} x 0.1 + write {D:,} x 1.25 = {money(turn_cost(21, False))}")
     print(f"  missed turn 21: read {P:,} x 0.1 + write {context(20) - P + D:,} x 1.25 = {money(turn_cost(21, True))}")
-    print(f"  extra per miss = (C(t) - P) x (1.25 - 0.1) x $5/MTok; at turn 21: {money(misses[3][1])}")
+    print(f"  extra per miss = (C(t-1) - P) x (1.25 - 0.1) x $5/MTok; at turn 21: {money(misses[3][1])}")
     d3.table([[t, money(extra)] for t, extra in misses] + [["six misses", money(sum(e for _, e in misses))]],
              ["turn after a look-up", "extra cost"])
     print(f"  session input cost without misses {money(normal)}; with them {money(normal + sum(e for _, e in misses))} "
@@ -93,6 +96,11 @@ def exercise5() -> list[list]:
     print(f"  largest k under W = {W:,}: (W - (P + S)) / D = ({W:,} - {P + S:,}) / {D:,} = "
           f"{(W - P - S) / D:.2f} -> k = {(W - P - S) // D}")
     d3.table(rows, ["compact every k turns", "summaries", "peak context", f"under {W:,}?", "cost per day"])
+    costs = {k: day(k)[0] for k in range(1, 21)}
+    best = min(costs, key=costs.get)
+    near = [k for k, c in costs.items() if c <= costs[best] * 1.02]
+    print(f"  cheapest k from 1 to 20: k = {best} at {money(costs[best])}; k = {min(near)}-{max(near)} are all within 2% "
+          "of it - a flat bottom, so let quality and natural boundaries choose inside it")
     return rows
 
 
@@ -108,7 +116,7 @@ def exercise6() -> None:
     fable, ctx = 10 / M, 30_000                                  # Fable 5.1, a 30K conversation
     rows = []
     for gap in (20, 30, 45, 70):
-        pings = gap // 4.5 if gap > 5 else 0                    # a max_tokens=0 re-send every 4.5 minutes
+        pings = math.ceil(gap / 4.5) - 1 if gap > 5 else 0      # a max_tokens=0 re-send every 4.5 minutes
         keepalive = pings * ctx * 0.025 * fable
         rewrite = ctx * (1.25 - 0.025) * fable                   # the entry expired: re-write instead of read
         one_hour = ctx * (2.0 - 1.25) * fable if gap < 60 else rewrite + ctx * (2.0 - 1.25) * fable
@@ -117,6 +125,14 @@ def exercise6() -> None:
                     "1-hour TTL premium"])
     print("  '1-hour TTL premium' = what writing the 30K context at 2x instead of 1.25x costs (the entry then "
           "survives gaps under an hour; past an hour it expires as well). Reads at 0.025x make pings nearly free.")
+    for name, p_in, read in (("Claude Opus 5", 5 / M, 0.1), ("Claude Fable 5.1", fable, 0.025)):
+        ping, premium = ctx * read * p_in, ctx * (2.0 - 1.25) * p_in
+        n = math.floor(round(premium / ping, 9))                # pings that cost no more than the premium
+        reach = 4.5 * (n + 1)                                   # n pings bridge gaps up to 4.5 x (n + 1) minutes
+        verdict = (f"the keep-alive wins for gaps up to about {reach:.0f} minutes, the 1-hour TTL from there to 60"
+                   if reach < 60 else "the keep-alive wins at every gap the 1-hour TTL can bridge (up to 60 minutes)")
+        print(f"  (c) {name}: a ping costs {money(ping)}, the 1-hour premium {money(premium)}; {n} pings cost no more "
+              f"than the premium, so {verdict}")
 
 
 # ------------------------------------------------------------------------------------------------ exercise 7

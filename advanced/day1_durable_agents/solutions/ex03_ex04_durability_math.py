@@ -136,8 +136,8 @@ def exercise_4() -> None:
     step("4d", "False takeovers from a slow ERP call without in-tool heartbeats")
     takeovers = TICKETS * GET_ORDER_SHARE * SLOW_SHARE
     print(f"  {TICKETS:,} x {GET_ORDER_SHARE:.0%} x {SLOW_SHARE:.1%} = {takeovers:.1f} false takeovers per month, each "
-          "re-generating the rest of the run - and, live, minting new tool_use ids (new idempotency keys) for "
-          "every later write")
+          "costing a repeated get_order and a duplicate tool.result: the zombie's next heartbeat raises LeaseLost "
+          "before it calls the model again, but the rest of its tool round runs first (key every write)")
 
     step("4e", "Choosing the numbers")
     slowest, budget = 60, 120

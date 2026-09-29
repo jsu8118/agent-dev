@@ -1,18 +1,19 @@
 """Solution to exercise 10 - an approval sweeper that two hosts can run at the same time.
 
-apply_safely() changes three things about the naive write phase:
+apply_safely() changes four things about the naive write phase:
 1. Claim before acting. Each (approval, action) pair gets one row in the durable effects table
-   (key "sweep:<approval>:<action>"); the host that inserts it acts, the other skips. RunStore.effect_begin
-   reads before it inserts, so under a true race the loser gets the primary key's IntegrityError instead of
-   the row - that means "taken", not "crash".
-2. Re-check right before acting. A plan is a snapshot; a manager may have decided since. An approval that is
-   no longer pending is left alone - unless it is our own half-finished expiry (a host died between its
-   decision and its page), which is finished instead.
-3. Key the side effect. The page carries the claim's key, so the pager deduplicates a retry after a crash;
-   expiry is written as "expired: ..." and an approval.expired event, not as a person's refusal.
-4. Finish what a dead host started. plan() only sees pending approvals, so an expiry a host decided but never
-   announced (it died before its page) would be lost; plan_unfinished() finds those and apply_safely() finishes
-   them under the same key.
+   (key "sweep:<approval>:<action>"); the host that inserts it acts, the other skips. RunStore.effect_begin() is
+   an INSERT OR IGNORE, so two hosts racing for the same key get exactly one "mine".
+2. Re-check right before acting, and read back after. A plan is a snapshot; a manager may have decided since.
+   An escalation needs a pending approval. An expiry goes through store.expire(), which settles only a pending
+   approval, so the sweeper reads the approval back and pages only if it is now expired: a manager who clicked
+   in between wins, and nobody is paged about an expiry that did not happen.
+3. Record expiry as expiry, and key the side effect. store.expire() gives the approval its own status, so the
+   reports and the model see "not decided in time", not a refusal nobody gave. The page carries the claim's
+   key, so the pager deduplicates a retry, and the event that says it was sent is written after it was sent.
+4. Finish what a dead host started. plan() only sees pending approvals, so an expiry a host settled but never
+   paged (it died in between) would be lost; plan_unfinished() finds those and apply_safely() finishes them
+   under the same key.
 
 No line of advanced/lib/durable.py changes: the solution only calls RunStore's public methods.
 Run: python advanced/day1_durable_agents/solutions/ex10_approval_sweeper.py
@@ -25,7 +26,6 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -51,11 +51,8 @@ starter = load_starter()
 
 
 def claim(store: RunStore, key: str, run_id: str) -> str:
-    """'mine' if this host won the claim, 'done' / 'in flight' if a claim exists, 'taken' if we lost a true race."""
-    try:
-        previous = store.effect_begin(key, run_id, "sla-sweeper")
-    except sqlite3.IntegrityError:
-        return "taken"
+    """'mine' if this host inserted the claim; 'done' or 'in flight' if a claim was already there."""
+    previous = store.effect_begin(key, run_id, "sla-sweeper")
     if previous is None:
         return "mine"
     return "done" if previous["status"] == "done" else "in flight"
@@ -65,8 +62,8 @@ def approval(store: RunStore, run_id: str, approval_id: str) -> dict:
     return next(a for a in store.approvals(run_id) if a["approval_id"] == approval_id)
 
 
-def ours(row: dict) -> bool:
-    return (row["note"] or "").startswith("expired:")
+def logged(store: RunStore, run_id: str, event: str, approval_id: str) -> bool:
+    return any(e["approval_id"] == approval_id for e in store.events(run_id, types=(event,)))
 
 
 class HostDied(BaseException):
@@ -74,12 +71,11 @@ class HostDied(BaseException):
 
 
 def plan_unfinished(store: RunStore) -> list[dict]:
-    """Expiries a dead host decided but never announced: an 'expired:' decision with no approval.expired event."""
+    """Expiries a dead host settled but never paged: status expired and no approval.expiry_paged event."""
     actions = []
     for run in store.list():
-        announced = {e["approval_id"] for e in store.events(run.id, types=("approval.expired",))}
         for a in store.approvals(run.id):
-            if a["status"] == "rejected" and ours(a) and a["approval_id"] not in announced:
+            if a["status"] == "expired" and not logged(store, run.id, "approval.expiry_paged", a["approval_id"]):
                 actions.append({"kind": "expire", "run_id": run.id, "approval_id": a["approval_id"]})
     return actions
 
@@ -90,33 +86,28 @@ def apply_safely(store: RunStore, pager, actions: list[dict], *, host: str, die_
         kind, run_id, approval_id = action["kind"], action["run_id"], action["approval_id"]
         key = f"sweep:{approval_id}:{kind}"
         state = claim(store, key, run_id)
-        if state in ("done", "taken"):
-            done.append(f"{kind} {run_id} -> skipped: another host has it ({state})")
+        if state == "done":
+            done.append(f"{kind} {run_id} -> skipped: another host already did it")
             continue
         current = approval(store, run_id, approval_id)
-        if current["status"] != "pending" and not (kind == "expire" and ours(current)):
-            store.effect_finish(key, {"skipped": f"decided by {current['decided_by']}"})
+        if kind == "expire" and current["status"] == "pending":
+            store.expire(approval_id, by=host, note=f"no decision within {starter.EXPIRE_AFTER.days} days")
+            current = approval(store, run_id, approval_id)     # expire() settles only a pending approval: who won?
+        if current["status"] != ("expired" if kind == "expire" else "pending"):
+            store.effect_finish(key, {"skipped": f"{current['status']} by {current['decided_by']}"})
             done.append(f"{kind} {run_id} -> skipped: decided by {current['decided_by']} since the plan")
             continue
         if kind == "expire":
-            if current["status"] == "pending":
-                store.decide(approval_id, approved=False, by=host,
-                             note=f"expired: no decision within {starter.EXPIRE_AFTER.days} days")
-                if not ours(approval(store, run_id, approval_id)):      # a person decided between check and act
-                    store.effect_finish(key, {"skipped": "decided by a person"})
-                    done.append(f"{kind} {run_id} -> skipped: decided by a person meanwhile")
-                    continue
             if die_before_page:
                 raise HostDied(f"{host} died after expiring {run_id}, before its page")
-            if not any(e["approval_id"] == approval_id for e in store.events(run_id, types=("approval.expired",))):
-                store.append(run_id, "approval.expired", {"approval_id": approval_id, "by": host})
             page = pager.page("support_manager", "Refund approval expired; the customer will be told it is overdue",
                               run_id=run_id, key=key)
+            event, payload = "approval.expiry_paged", {"to": "support_manager"}
         else:
-            if not any(e["approval_id"] == approval_id for e in store.events(run_id, types=("approval.escalated",))):
-                store.append(run_id, "approval.escalated", {"approval_id": approval_id, "to": "finance_director",
-                                                            "by": host})
             page = pager.page("finance_director", f"Refund approval waiting {action['hours']} h", run_id=run_id, key=key)
+            event, payload = "approval.escalated", {"to": "finance_director"}
+        if not logged(store, run_id, event, approval_id):          # after the page: the log says what was done
+            store.append(run_id, event, {"approval_id": approval_id, **payload, "page_id": page["page_id"], "by": host})
         store.effect_finish(key, page)
         done.append(f"{kind} {run_id} -> {page['page_id']}" + (" (finished a dead host's claim)" if state == "in flight" else ""))
     return done
@@ -159,11 +150,11 @@ def main() -> None:
     crash = dead_host_scenario(client)
 
     store, pages = result["store"], result["pager"].pages
-    a, b = approval(store, "apr-A", store.approvals("apr-A")[0]["approval_id"]), store.approvals("apr-B")[0]
+    a, b = store.approvals("apr-A")[0], store.approvals("apr-B")[0]
     checks = {
         "3 pages: escalate A, escalate B, expire A": [(p["to"], p["run_id"]) for p in pages] == [
             ("finance_director", "apr-A"), ("finance_director", "apr-B"), ("support_manager", "apr-A")],
-        "apr-A expired, not refused": a["status"] == "rejected" and ours(a),
+        "apr-A expired, not refused": a["status"] == "expired",
         "apr-B keeps the manager's approval and is refunded": b["status"] == "approved" and len(d1.refunds(result["db"])) == 1,
         "apr-A's customer hears 'overdue' with an escalation": "escalated" in result["replies"]["apr-A"].reply,
         "a dead host's expiry is paged exactly once by the next sweep": crash,

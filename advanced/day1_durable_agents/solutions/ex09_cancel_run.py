@@ -7,8 +7,9 @@ Design, in four decisions:
    cancel() takes the lease itself and finishes the job: pending approvals are closed as rejected with the
    reason, a run.cancelled event lists the tools that had already run, and the status becomes cancelled.
 3. A worker that holds the run checks for the request at every checkpoint - before each model call (a wrapped
-   client) and at the runner's own hook points after the model, before and after each tool (_maybe_crash) -
-   and stops there. A tool already running is not interrupted: its effect happens or not, and the log says so.
+   client), at the runner's own hook points after the model, before and after each tool (_maybe_crash), and
+   before run() answers a settled approval (an approved action executes there) - and stops there. A tool already
+   running is not interrupted: its effect happens or not, and the log says so.
 4. Cancel is not undo. Effects that completed stay completed; run.cancelled names them so a person (or a
    saga's compensations) can decide. Cancelling twice, or cancelling a finished run, changes nothing.
 
@@ -111,16 +112,15 @@ class CancellableRunner(DurableRunner):
                 raise RunCancelled(run_id)
             return super().run(run_id)
         except RunCancelled:
-            return self._settle(run_id)
+            return self._honour_cancel(run_id)
         finally:
             self._current = None
 
-    def resume_after_decision(self, run_id: str) -> Outcome:
-        if cancel_request(self.store, run_id) is not None:  # never execute an approved action of a cancelled run
-            return self.run(run_id)
-        return super().resume_after_decision(run_id)
+    def _answer_decided(self, run_id: str) -> None:        # run() executes an approved action here: check first
+        self.checkpoint()
+        super()._answer_decided(run_id)
 
-    def _settle(self, run_id: str) -> Outcome:
+    def _honour_cancel(self, run_id: str) -> Outcome:
         if self.store.acquire(run_id, self.worker, self.lease_ttl_s):
             try:
                 finish_cancel(self.store, run_id)

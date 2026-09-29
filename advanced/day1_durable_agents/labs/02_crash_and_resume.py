@@ -4,8 +4,8 @@ Objective
     Crash the durable support run at each crash point the runner offers (after the model responded, before a
     tool ran, after a tool ran) on every turn, resume each run from a second worker and count what the resumer
     replayed from the log versus executed again.  Add the crash point the runner cannot offer - the response
-    arrived but was never logged - and the one it does not handle - the final answer was logged but the run was
-    never marked completed.  Then prove the property a resume depends on: the resumed worker's first request
+    arrived but was never logged - and the one it must finish from the log - the final answer was logged but the
+    run was never marked completed.  Then prove the property a resume depends on: the resumed worker's first request
     extends the crashed worker's last request byte for byte (append-only), so it reads the prompt cache the
     crashed worker wrote.  Break that property twice on purpose - tool results stored in a column that re-orders
     JSON keys, and a redeploy that changed the system prompt - and watch the cache collapse on Claude Opus 5 and
@@ -94,7 +94,6 @@ def new_run(store_name: str, ticket: dict, run_id: str):
 
 def worker(store, client, db, ticket, name, **kw):
     desk = SupportDesk(ticket["from_email"], db=db, ticket_ref=ticket["ticket_id"])
-    kw.setdefault("runner_cls", d1.FinishingRunner)
     return d1.support_runner(store, client, execute=d1.desk_executor(desk), worker=name, **kw)
 
 
@@ -168,11 +167,10 @@ def step_matrix(client, ticket):
                "tool_use has no result, so the resumer runs that tool once. The run after the crash is still "
                "'running' in the store: its worker never got to change it, which is what stuck-run detection in "
                "lab 06 looks for."))
-    print(wrap("The last row is the crash the shipped runner does not handle: turn 4 was logged with "
-               "stop_reason=end_turn but the process died before marking the run completed. Resuming by re-sending "
-               "that conversation would end on an assistant turn - a prefill, rejected with a 400 - so "
-               "FinishingRunner (in _day1.py) completes the run from the log without a model call: 0 model calls, "
-               "the same reply."))
+    print(wrap("The last row is the crash a resume must not answer with a model call: turn 4 was logged with "
+               "stop_reason=end_turn but the process died before marking the run completed. Re-sending that "
+               "conversation would end on an assistant turn - a prefill, which current models reject with a 400 - "
+               "so the runner completes the run from the log: 0 model calls, the same reply."))
 
 
 def step_response_lost(client, ticket):
@@ -257,6 +255,7 @@ def resume_variant(client, ticket, model: str, label: str, **resumer) -> tuple[s
     except anthropic.BadRequestError as exc:
         message = d1.api_error(exc)
         result = "400 " + message.split(" Remove the block")[0].replace("Invalid `signature` in `thinking` block. ", "")
+        result += f" Run {store.get(run.id).status}."          # a 4xx will not succeed on retry: logged, run failed
     responses = store.events(run.id, types=("model.response",))
     return result, (responses[2]["usage"] if len(responses) > 2 else None)
 
@@ -275,8 +274,9 @@ def step_what_breaks_it(client, ticket):
     print(wrap("Same data, different bytes. On Claude Opus 5 (no prefix check) both faulty resumes still complete, "
                "but the cache is read only up to the first changed byte and everything after it is written again "
                "at 1.25x. On Claude Fable 5.1 the thinking block after the first changed byte is bound to the old "
-               "prefix, so the request is a 400; with prefix_mismatch_behavior \"drop_block\" it would instead run "
-               "without the dropped reasoning. Claude Opus 5.5 behaves like Fable 5.1 on accounts the check is "
+               "prefix, so the request is a 400 - which the runner logs as model.error before failing the run, "
+               "because retrying a 400 cannot fix it; with prefix_mismatch_behavior \"drop_block\" the request "
+               "would instead run without the dropped reasoning. Claude Opus 5.5 behaves like Fable 5.1 on accounts the check is "
                "enforced for (created on or after 2026-08-31)."))
     print(wrap("Fixes: store what you send back as exact text (a TEXT or json column, not one that normalises "
                "JSON), and pin the prompt and tool versions a run started with - keep every version that still has "

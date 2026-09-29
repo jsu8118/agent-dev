@@ -7,8 +7,10 @@ holds the lease, in the same statement:
 
     INSERT INTO events (...) SELECT ... WHERE EXISTS (SELECT 1 FROM runs WHERE run_id = ? AND lease_owner = ?)
 
-A failed heartbeat raises LeaseLost instead of returning False, so the runner also stops before its next model
-call. What fencing cannot do: undo what the zombie did OUTSIDE the store while it believed it held the lease -
+The runtime's own check - heartbeat() before every model call, LeaseLost when it fails - stops the zombie too,
+but only after the write it made on returning from its slow tool; the fence refuses that write, so the log never
+holds a second answer to the same tool call. What fencing cannot do: undo what the zombie did OUTSIDE the store
+while it believed it held the lease -
 the read it repeated, or a write to another system. That is what idempotency keys are for (the zombie and the
 new owner answer the same tool_use, so they carry the same key), and why a downstream system you control should
 accept a fencing token (a lease version) too.
@@ -16,7 +18,7 @@ accept a fencing token (a lease version) too.
 No line of advanced/lib/durable.py changes: FencedStore subclasses RunStore.
 Run: python advanced/day1_durable_agents/solutions/ex11_fencing.py
 """
-# test: expect=stopped: LeaseLost
+# test: expect=stopped: LeaseLost: worker-a may not write
 # test: expect=3/3 checks passed
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "labs"))
 
-from advanced.lib.durable import RunStore  # noqa: E402
+from advanced.lib.durable import LeaseLost, RunStore  # noqa: E402
 from labkit import get_client, header, is_mock, step  # noqa: E402
 
 
@@ -45,7 +47,6 @@ def load_starter():
 
 
 starter = load_starter()
-LeaseLost = starter.LeaseLost
 
 
 def now_iso() -> str:
@@ -83,11 +84,6 @@ class FencedStore(RunStore):
             raise LeaseLost(f"{self.owner} may not set {run_id} to {status}: it no longer holds the lease")
         self.append(run_id, "run.status", {"status": status, "error": error})
 
-    def heartbeat(self, run_id: str, owner: str, ttl_s: float = 30.0) -> bool:
-        if not super().heartbeat(run_id, owner, ttl_s):
-            raise LeaseLost(f"{owner}'s heartbeat on {run_id} failed: another worker took the run")
-        return True
-
 
 def main() -> None:
     client = get_client()
@@ -105,7 +101,8 @@ def main() -> None:
     for key, value in after.items():
         print(f"  {key:<18} {value}")
 
-    checks = {"worker-a stopped at its first write after the takeover": after["worker-a"].startswith("stopped: LeaseLost"),
+    checks = {"worker-a stopped at its first write after the takeover":
+              after["worker-a"].startswith("stopped: LeaseLost: worker-a may not"),
               "one get_order result and three model responses": after["get_order results"] == 1
               and after["log"].startswith("model.response=3"),
               "worker-b completed the run": after["final status"] == "completed"}

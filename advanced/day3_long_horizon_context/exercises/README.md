@@ -95,8 +95,8 @@ c. Which would you use, and when does the answer change?
 
 ## 7. Calculation - sizing a task budget
 
-Lab 01 measured the day's spend per site (output plus tool results): gbwd 19,169; harbor 18,188; riverbend 3,268; cedar
-2,879; cobalt 19,037; westfield 3,079 - 65,620 tokens in all.
+Lab 01 measured the day's spend per site (the 100k arm's "output + tool results" column): gbwd 19,169; harbor
+18,188; riverbend 3,268; cedar 2,879; cobalt 19,037; westfield 3,079 - 65,620 tokens in all.
 
 a. Choose a `task_budget.total` for a technician-day and justify it.
 b. The harness resets the conversation at each departure (lab 02's scratchpad). What `remaining` does it pass after

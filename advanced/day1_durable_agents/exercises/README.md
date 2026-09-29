@@ -140,15 +140,17 @@ Decide what a cancel does NOT do, and say where that belongs.
 ## 10. Hands-on - an approval sweeper two hosts can run (`ex10_approval_sweeper.py`)
 
 The starter runs lab 05's sweeper on two hosts that read before either writes, with a manager deciding in the
-middle. It pages seven times where three pages are right. Make each action at-most-once, key the page, re-check
-the approval right before acting, and record expiry as expiry. What would still go wrong if a host died between
-its decision and its page, and how does your code handle it?
+middle. It pages seven times where three pages are right, and it records the expiry as a refusal, so the customer
+is told the refund "could not be approved" when nobody decided. Make each action at-most-once, key the page,
+re-check the approval right before acting, and record expiry as expiry (`store.expire()`). What would still go
+wrong if a host died between its expiry and its page, and how does your code handle it?
 
 ## 11. Hands-on - fencing a zombie worker (`ex11_fencing.py`)
 
-Reproduce lab 06's false takeover and make the zombie stop writing: a `FencedStore` whose writes to a run are
-conditional on holding its lease (checked and written in one statement) and whose failed heartbeat raises.
-Then answer: what can fencing NOT prevent, and what covers that gap?
+Reproduce lab 06's false takeover. The runtime stops the zombie at its next heartbeat (`LeaseLost`), but by then
+it has logged a second answer to the same tool call. Make that write fail: a `FencedStore` whose writes to a run
+are conditional on holding its lease (checked and written in one statement). Then answer: what can fencing NOT
+prevent, and what covers that gap?
 
 ## 12. Hands-on - snapshots and a tail rebuild (`ex12_snapshots.py`)
 

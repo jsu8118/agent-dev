@@ -254,8 +254,8 @@ def main() -> None:
     client = get_client()
     header("Lab 02 - Compaction strategies compared")
     if is_mock():
-        print("(mock mode: token counts are estimates; server-side clearing and compaction are simulated with the "
-              "documented semantics; the stand-in answers probes only from what is left in its context)")
+        print("[mock] Token counts are estimates; server-side clearing and compaction are simulated with the "
+              "documented semantics; the stand-in answers probes only from what is left in its context.")
 
     results = {}
     for i, name in enumerate(chosen, 1):

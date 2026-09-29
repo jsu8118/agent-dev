@@ -180,8 +180,8 @@ def main() -> None:
     client = get_client()
     header("Lab 06 - Subagent isolation: six site logs, stuffed or read by subagents")
     if is_mock():
-        print("(mock mode: the readers and the coordinator are rule-based stand-ins that report only what the log or "
-              "their context contains; parallel requests run, but the mock has no real latency to save)")
+        print("[mock] The readers and the coordinator are rule-based stand-ins that report only what the log or "
+              "their context contains; parallel requests run, but the mock has no real latency to save.")
 
     step(1, "What the logs weigh")
     sizes = {s: client.messages.count_tokens(model=MODEL, messages=[{"role": "user", "content": [document(s)]}])

@@ -3,14 +3,14 @@
 Objective
     Put two worker threads on the same run and watch the lease keep the second one off; make a slow tool
     outlive the lease and see what heartbeats change (with them the second worker is refused, without them it
-    takes the run over while the first is still working - and both finish it); kill a worker the way an OOM
-    kill does (no release) and watch stuck() find the run once its lease expires; take it over; and run the
-    sweeper a production deployment runs every minute.
+    takes the run over while the first is still working, and the first writes once more before its next
+    heartbeat tells it to stop); kill a worker the way an OOM kill does (no release) and watch stuck() find the
+    run once its lease expires; take it over; and run the sweeper a production deployment runs every minute.
 
 Concepts
     leases (owner + expiry) vs locks; TTL and heartbeat interval; heartbeats from inside long tools; stale-lease
-    takeover; the false takeover (TTL shorter than a step) and its duplicate events; stuck-run detection;
-    the sweeper loop; detection latency = TTL + sweep interval.
+    takeover; the false takeover (TTL shorter than a step), LeaseLost at the zombie's next heartbeat, and the
+    write that lands before it; stuck-run detection; the sweeper loop; detection latency = TTL + sweep interval.
 
 Run
     python advanced/day1_durable_agents/labs/06_leases_heartbeats_stuck_runs.py
@@ -18,8 +18,8 @@ Run
 What to observe
     * "leased by another worker": the second worker is refused while the first holds the lease.
     * With heartbeats a 2.5-second tool keeps a 1-second lease alive; without them the lease lapses mid-tool,
-      worker-b takes over, and the log ends up with duplicate tool.result and model.response events - while
-      worker-a's own heartbeat() already answered False (the runner ignores the answer: exercise 11 fences it).
+      worker-b takes over and finishes, and worker-a stops with LeaseLost at its next heartbeat - after its
+      tool result has already landed as a duplicate (exercise 11 fences that write).
     * After the kill the lease is still owned by the dead worker; stuck() is empty until it expires, then
       lists the run; the takeover finishes it with the logged results replayed.
     * The sweeper table: healthy, dead and finished runs, and what it does with each.
@@ -162,23 +162,23 @@ def step_heartbeats(store, client, ticket):
         except RuntimeError as exc:
             print(f"{label}: worker-b at t=1.6 s -> RuntimeError: {exc}")
         thread.join()
-        outcome_a = result.get("outcome")
-        print(f"  worker-a finished too: {d1.outcome_line(outcome_a) if outcome_a else result.get('error')}")
+        outcome_a, error_a = result.get("outcome"), result.get("error")
+        print(f"  worker-a: {d1.outcome_line(outcome_a) if outcome_a else f'{type(error_a).__name__}: {error_a}'}")
         print(f"  log: {event_counts(store, run.id)}")
         print(f"  worker-a's heartbeat() answers, in order: {answers_line(a_store.answers)}")
         if not heartbeats:
             dup = [e for e in store.events(run.id, types=("tool.result",)) if e["name"] == "get_order"]
-            print(f"  get_order results in the log: {len(dup)} - the same tool_use answered twice, and the model "
-                  "called twice for the turns after it")
-            print(wrap("worker-a's last heartbeat - before its turn-3 model call - answered False: it could have "
-                       "known it no longer owned the run. DurableRunner does not check the answer, so the zombie "
-                       "logged a second result and paid for a second turn 3. Exercise 11 fences it: stop when the "
-                       "heartbeat fails, and refuse writes from a worker that no longer holds the lease."))
-    print(wrap("A false takeover is worse than a slow one: two workers now believe they own the run, both log, "
-               "both call the model, both may run the next tool. Rule: TTL is a multiple of the heartbeat "
-               "interval (3x is common), and anything that can take longer than the TTL - a slow tool, a long "
-               "model call - heartbeats from inside. The runner heartbeats before every model call; your tools "
-               "heartbeat through ctx.store.heartbeat(run_id, worker, ttl)."))
+            print(f"  get_order results in the log: {len(dup)} - the same tool_use answered twice")
+            print(wrap("worker-a's heartbeat before its turn-3 model call answered False, and the runner stopped it "
+                       "with LeaseLost: no second turn 3. But the get_order result it wrote on returning from the "
+                       "slow tool - before that heartbeat - landed in the log anyway. The heartbeat check narrows "
+                       "the zombie's window to one step; fencing every write on the lease (exercise 11) closes it."))
+    print(wrap("A false takeover is worse than a slow one: for one step two workers believe they own the run, and "
+               "whatever the zombie does in that step - a tool result, a write to another system, a whole model "
+               "turn if the takeover happens during a long model call - happens twice. Rule: TTL is a multiple of "
+               "the heartbeat interval (3x is common), and anything that can take longer than the TTL - a slow "
+               "tool, a long model call - heartbeats from inside. The runner heartbeats before every model call "
+               "and stops when that fails; your tools heartbeat through ctx.store.heartbeat(run_id, worker, ttl)."))
 
 
 def step_killed(store, client, ticket):

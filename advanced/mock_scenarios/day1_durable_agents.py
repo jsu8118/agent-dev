@@ -140,8 +140,9 @@ def approvals_policy(req: MockRequest) -> Reply:
                    f"{refund.get('refund_id')}, approved by {refund.get('approved_by', 'our team')}). It will reach "
                    "your original payment method within 10 business days.")
     error = _json(refund_call).get("error", "")
-    if "no decision" in error.lower() or "expired" in error.lower():
-        # An expired approval is not a refusal: hand it to a person, so the follow-up the customer is promised exists.
+    if error.startswith("Not decided in time") or "expired" in error.lower():
+        # An expired approval (store.expire()) is not a refusal: hand it to a person, so the follow-up the customer is
+        # promised exists. A refusal - even one whose note says nobody decided - is reported as a refusal below.
         if not req.called("escalate_to_human"):
             return use_tools(tool("escalate_to_human", queue="finance", priority="P2", order_id=rma.get("order_id"),
                                   summary=f"Refund of {_money(due)} on {rma_id} got no approval decision before it "

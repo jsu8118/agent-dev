@@ -295,8 +295,8 @@ def main() -> None:
     client = get_client()
     header("Lab 05 - Memory architectures: working, episodic and semantic memory")
     if is_mock():
-        print("(mock mode: the stand-in searches before it acts or writes, and treats notes as data; the guards and the "
-              "consolidation bookkeeping are real code in this lab)")
+        print("[mock] The stand-in searches before it acts or writes, and treats notes as data; the guards and the "
+              "consolidation bookkeeping are real code in this lab.")
     memory = TieredMemory(runs_dir("advanced", "day3") / "field_memory.db")
     old = memory.add_fact("harbor", "the chilled-water pump HF-KP250-03 may only be stopped on Sundays 06:00-10:00",
                           "rule", ["E-0 (visit 2026-06-02)"], "2026-06-02")

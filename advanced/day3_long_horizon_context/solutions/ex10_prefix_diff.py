@@ -30,7 +30,7 @@ spec = importlib.util.spec_from_file_location("ex10_starter", HERE.parents[0] / 
 starter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(starter)
 
-from labkit import get_client  # noqa: E402
+from labkit import get_client, is_mock  # noqa: E402
 from labkit.models import can_read_thinking  # noqa: E402
 
 
@@ -47,7 +47,7 @@ def divergence(prev: dict, nxt: dict) -> int | None:
     for i in range(min(len(pm), len(nm))):
         if starter.canonical(pm[i]) != starter.canonical(nm[i]):
             return i
-    return 0 if len(nm) < len(pm) else None           # shorter: turns were dropped from the front
+    return None                                        # append-only (or a rewind: nothing left in nxt was edited)
 
 
 def predict(prev: dict, nxt: dict, model: str, producers: dict[int, str], behaviour: str | None) -> list[dict]:
@@ -97,6 +97,10 @@ def main() -> None:
     starter.d3.table(rows, ["case", "prefix_mismatch_behavior", "diverges at", "predicted = API", "check"])
     print(f"{matches}/{len(cases)} predictions match the API. Run predict() in the request path: in CI fail the build "
           "on any 'rejected' or 'dropped (prefix)'; in production log them before the API does.")
+    if is_mock():
+        print("[mock] Opus 5.5 runs here like an account created before 2026-08-31 (the check is recorded). On a newer "
+              "account it is enforced and the '(unset)' Opus 5.5 row is a 400 - feed binding() the account's posture, "
+              "not only the model's.")
 
 
 if __name__ == "__main__":

@@ -890,8 +890,9 @@ def describe_event(ev: Any, width: int = 70) -> str:
         ids = f" event_ids={stop.event_ids}" if getattr(stop, "event_ids", None) else ""
         return f"{kind:<32}{who} stop_reason={stop.type}{ids}"
     if kind == "span.model_request_end":
-        u = ev.model_usage
-        return f"{kind:<32} in={u.input_tokens} cache_r={u.cache_read_input_tokens} out={u.output_tokens}"
+        u = usage_tokens(ev.model_usage)
+        return (f"{kind:<32} in={u['input_tokens']} cache_w={u['cache_creation_input_tokens']} "
+                f"cache_r={u['cache_read_input_tokens']} out={u['output_tokens']}")
     if kind == "session.usage":
         return f"{kind:<32} list_cost={ev.usage.list_cost.amount} cents"
     if kind == "session.thread_created":
@@ -925,8 +926,9 @@ def session_events(client: Any, session_id: str) -> list:
     return events
 
 
-def _usage_tokens(usage: Any) -> dict:
-    """Token totals from a session's usage object (cache writes may come as a total or as a per-TTL breakdown)."""
+def usage_tokens(usage: Any) -> dict:
+    """Token totals from a session's, a thread's or a span's usage object (cache writes may come as a total or as a
+    per-TTL breakdown)."""
     written = getattr(usage, "cache_creation_input_tokens", None)
     if written is None and getattr(usage, "cache_creation", None) is not None:
         breakdown = usage.cache_creation.model_dump() if hasattr(usage.cache_creation, "model_dump") else dict(usage.cache_creation)
@@ -936,12 +938,31 @@ def _usage_tokens(usage: Any) -> dict:
             "cache_read_input_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0)}
 
 
+def prompt_tokens(totals: dict) -> int:
+    """Everything a model read: uncached input + cache writes + cache reads (caching changes the price, not the count)."""
+    return int(totals.get("input_tokens") or 0) + int(totals.get("cache_creation_input_tokens") or 0) + \
+        int(totals.get("cache_read_input_tokens") or 0)
+
+
+def uncached_cost(totals: dict, model: str = MODEL) -> float:
+    """The same tokens priced with no cache at all - what caching saved, or an architecture's cost before caching."""
+    return cost_usd({"input_tokens": prompt_tokens(totals), "output_tokens": int(totals.get("output_tokens") or 0)}, model)
+
+
+def api_error_message(exc: Exception) -> str:
+    """The message of an API error (anthropic.APIStatusError), without the SDK's wrapping."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        return str((body.get("error") or {}).get("message") or exc)
+    return str(exc)
+
+
 def session_spend(client: Any, session_id: str, model: str = MODEL) -> dict:
     """What a session consumed: token totals from the session's own usage (authoritative - every thread), the exact
     list price of those tokens, the platform's list_cost (cents, rounded; live it also counts running time), and -
     from the span.model_request_end events of every thread - the number of model requests and the largest prompt."""
     session = client.beta.sessions.retrieve(session_id)
-    totals = _usage_tokens(session.usage)
+    totals = usage_tokens(session.usage)
     requests, largest = 0, 0
     for ev in session_events(client, session_id):
         if ev.type == "span.model_request_end":

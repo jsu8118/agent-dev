@@ -3,18 +3,18 @@
 Objective
     Give the support agent a refund gate: refunds above the agent's limit raise ApprovalRequired, which parks the
     run durably (status waiting_approval, no lease, no model call while it waits).  Decide the approval from a
-    second RunStore on the same database file - the way an approval UI, a chat bot or a CLI would - and learn
-    the dispatcher rule that makes the decision count: a decided run is resumed with resume_after_decision(),
-    because a plain run() would ask again.  Then the rejected path, a timeout sweeper that escalates and then
-    expires the approval (with an escalation behind what the customer is told), and the alternative the first
-    course used: stop and ask, with a read-only toolset.
+    second RunStore on the same database file - the way an approval UI, a chat bot or a CLI would - and let any
+    worker resume the run with a plain run(): the runtime answers the settled approval before anything else
+    (and you see what happened when it did not).  Then the rejected path, a timeout sweeper that escalates and
+    then expires the approval (with an escalation behind what the customer is told), and the alternative the
+    first course used: stop and ask, with a read-only toolset.
 
 Concepts
     ApprovalRequired and the approvals table, durable waits (hours or days, no process holding state), deciding
-    from another process, idempotent decisions, the approved action as an at-most-once effect, the dispatcher
-    rule (resume_after_decision vs run), rejected approvals as tool errors the model must explain, SLA sweepers
-    (escalate, then expire - expiry is not a rejection), and the comparison with stop-and-ask / tool_choice
-    patterns and Managed Agents' tool confirmations.
+    from another process, idempotent decisions, the approved action as an at-most-once effect, answering settled
+    approvals before the loop continues, rejected approvals as tool errors the model must explain, SLA sweepers
+    (escalate, then expire - store.expire(): expiry is not a rejection), and the comparison with stop-and-ask /
+    tool_choice patterns and Managed Agents' tool confirmations.
 
 Run
     python advanced/day1_durable_agents/labs/05_approvals_that_wait.py
@@ -23,15 +23,16 @@ What to observe
     * status=waiting_approval with lease_owner=None; a second run() call returns immediately without a model call.
     * The approval UI (another RunStore instance) lists the parked run, sees the action, decides; the run goes
       back to pending.
-    * The dispatcher rule: run() on a decided run executes the gated tool again and parks the run on a NEW
-      approval; resume_after_decision() issues refund RF-7001 approved_by ops.manager, once.
+    * Before the runtime answered settled approvals itself, run() on a decided run executed the gated tool
+      again and parked the run on a NEW approval; today run() issues refund RF-7001 approved_by ops.manager, once.
     * The rejected run: the tool result says who declined and why, and the reply tells the customer honestly.
-    * The sweeper: approval.escalated after 4 h, expired after 2 days, and the reply names an escalation that
-      really exists (ESC-4101) - "overdue", not "refused".
+    * The sweeper: approval.escalated after 4 h, store.expire() after 2 days (status "expired"), and the reply
+      names an escalation that really exists (ESC-4101) - "overdue", not "refused".
 """
 # test: expect=waiting_approval
 # test: expect=could not be approved
 # test: expect=approvals now: ['approved', 'pending']
+# test: expect=approved by ops.manager
 
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from advanced.lib.durable import RunStore
+from advanced.lib.durable import DurableRunner, RunStore
 from kestrel.support_agent import run_support_agent
 from kestrel.support_tools import TOOLS, SupportDesk
 from labkit import get_client, header, is_mock, step, wrap
@@ -53,9 +54,10 @@ READ_ONLY = [t for t in TOOLS if t["name"] in ("get_customer_profile", "get_orde
                                                 "search_knowledge_base", "escalate_to_human")]
 
 
-def worker(store, client, db, name: str):
+def worker(store, client, db, name: str, runner_cls=DurableRunner):
     desk = SupportDesk(d1.APPROVALS_EMAIL, db=db, ticket_ref=d1.APPROVALS_TICKET)
-    return d1.support_runner(store, client, execute=d1.gated_executor(desk, db), worker=name, system=d1.APPROVALS_SYSTEM)
+    return d1.support_runner(store, client, execute=d1.gated_executor(desk, db), worker=name, system=d1.APPROVALS_SYSTEM,
+                             runner_cls=runner_cls)
 
 
 def park(store, client, db, run_id: str):
@@ -63,12 +65,13 @@ def park(store, client, db, run_id: str):
     return run, worker(store, client, db, "worker-a").run(run.id)
 
 
-# ---------------------------------------------------------------------------- the dispatcher
-def dispatch(store: RunStore, runner, run_id: str):
-    """The rule a queue consumer must follow for runs that come back to 'pending' after a decision."""
-    if d1.decided_but_unanswered(store, run_id):
-        return runner.resume_after_decision(run_id)
-    return runner.run(run_id)
+# ---------------------------------------------------------------------------- the runtime before the fix
+class RunnerBeforeTheFix(DurableRunner):
+    """DurableRunner as it was before it answered settled approvals itself: run() rebuilt the transcript, found
+    the gated tool call without a result, and executed it again - without the approval."""
+
+    def _answer_decided(self, run_id: str) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------- the SLA sweeper
@@ -83,8 +86,7 @@ def sweep_approvals(store: RunStore, *, now: dt.datetime, escalate_after: dt.tim
                 continue
             age = now - dt.datetime.fromisoformat(a["requested_at"])
             if age >= expire_after:
-                store.decide(a["approval_id"], approved=False, by=by,
-                             note=f"expired: no decision within {expire_after.days} days")
+                store.expire(a["approval_id"], by=by, note=f"no decision within {expire_after.days} days")
                 actions.append(f"{run.id}: expired after {age.days} days -> run back in the queue")
             elif age >= escalate_after and a["approval_id"] not in escalated:
                 store.append(run.id, "approval.escalated", {"approval_id": a["approval_id"], "from": a["action"].get("queue"),
@@ -129,29 +131,30 @@ def step_decide(store, run):
           f"{ui.approvals(run.id)[0]['decided_by']}: deciding is idempotent")
 
 
-def step_dispatch(store, client, db, run):
-    naive_store, naive_db = d1.fresh_store("05_naive_dispatch"), memory_db()
-    naive_run, parked = park(naive_store, client, naive_db, "sd-T-1207-naive")
+def step_resume(store, client, db, run):
+    old_store, old_db = d1.fresh_store("05_before_the_fix"), memory_db()
+    old_run, parked = park(old_store, client, old_db, "sd-T-1207-before")
     if parked.approval_id is None:
-        print("the copy did not park (live: the model took a different path) - skipping the naive consumer")
-        return
-    naive_store.decide(parked.approval_id, approved=True, by="ops.manager")
-    outcome = worker(naive_store, client, naive_db, "worker-b").run(naive_run.id)       # a queue consumer: run() on pending
-    print("a naive queue consumer calls run() on the decided run (a copy of the same case):")
-    print(f"  {d1.outcome_line(outcome)} | approvals now: {[a['status'] for a in naive_store.approvals(naive_run.id)]} | "
-          f"refunds: {d1.refunds(naive_db)}")
-    print(wrap("run() rebuilt the transcript, found issue_refund without a result, executed it again without the "
-               "approval - and the gate asked again. The manager's decision is ignored and a second approval now "
-               "waits in the UI."))
+        print("the copy did not park (live: the model took a different path) - skipping the before-the-fix demo")
+    else:
+        old_store.decide(parked.approval_id, approved=True, by="ops.manager")
+        outcome = worker(old_store, client, old_db, "worker-b", RunnerBeforeTheFix).run(old_run.id)
+        print("before the runtime answered decisions itself, a worker calling run() on the decided run (a copy):")
+        print(f"  {d1.outcome_line(outcome)} | approvals now: {[a['status'] for a in old_store.approvals(old_run.id)]} "
+              f"| refunds: {d1.refunds(old_db)}")
+        print(wrap("It rebuilt the transcript, found issue_refund without a result and executed it again - without "
+                   "the approval, so the gate asked again: the manager's decision was ignored and a second approval "
+                   "waited in the UI. Every queue consumer had to route decided runs to a separate resume call, and "
+                   "the one that forgot did this."))
 
-    print("\nthe dispatcher rule: a run with a decided but unanswered approval goes to resume_after_decision():")
-    outcome = dispatch(store, worker(store, client, db, "worker-b"), run.id)
+    print("\ntoday, any worker calls run(); the runtime answers the settled approval before the loop continues:")
+    outcome = worker(store, client, db, "worker-b").run(run.id)
     print(f"  worker-b: {d1.outcome_line(outcome)}")
     print("  reply:\n" + wrap(outcome.reply, indent="    "))
     print(f"  refunds: {d1.refunds(db)}")
-    print(wrap("executed_tools=0 and replayed_tools=3: the approved refund ran inside resume_after_decision() "
-               "(under its own key, <run>:<tool_use>:approved, as an at-most-once effect) and was logged as the "
-               "tool result; run() then replayed it with the other two. The log since the request:"))
+    print(wrap("executed_tools=0 and replayed_tools=3: the approved refund ran before the loop, as an at-most-once "
+               "effect under its own key (<run>:<tool_use>:approved), and was logged as the tool result; the loop "
+               "then replayed it with the other two. The log since the request:"))
     seq = [e["seq"] for e in store.events(run.id, types=("approval.requested",))][0]
     d1.print_log(store, run.id, since_seq=seq - 1)
 
@@ -164,7 +167,7 @@ def step_reject(store, client, db):
         return
     store.decide(outcome.approval_id, approved=False, by="ops.manager",
                  note="the unit shows signs of installation; refund on hold pending a second inspection")
-    outcome = dispatch(store, worker(store, client, db, "worker-b"), run.id)
+    outcome = worker(store, client, db, "worker-b").run(run.id)
     print(f"worker-b: {d1.outcome_line(outcome)}")
     result = store.events(run.id, types=("tool.result",))[-1]
     print(f"tool result the model saw: {d1.short(result['content'], 150)}")
@@ -184,7 +187,7 @@ def step_sweeper(store, client, db):
         actions = sweep_approvals(store, now=requested + later, **ladder)
         print(f"  sweep at +{label:<10} -> {actions or ['nothing to do']}")
     print(f"  run status now: {store.get(run.id).status}")
-    outcome = dispatch(store, worker(store, client, db, "worker-b"), run.id)
+    outcome = worker(store, client, db, "worker-b").run(run.id)
     print(f"worker-b: {d1.outcome_line(outcome)}  tools after the expiry: "
           f"{d1.tool_calls(store, run.id)[d1.tool_calls(store, run.id).index('issue_refund') + 1:]}")
     print("reply:\n" + wrap(outcome.reply))
@@ -193,12 +196,11 @@ def step_sweeper(store, client, db):
     print("events:")
     d1.print_log(store, run.id, types=("approval.requested", "approval.escalated", "approval.decided", "run.status"))
     print(wrap("The ladder is policy, not runtime: the store keeps requested_at, the sweeper applies the SLA, and "
-               "the run resumes with a tool error that says 'expired', which the model answers by escalating - so "
-               "the follow-up the customer is promised is a record with an owner and an SLA, not a sentence. "
-               "Expiry is not a refusal: nobody said no. The shipped approvals table knows only approved and "
-               "rejected, so the note carries the difference; give it its own status if you can. A late approval "
-               "after the expiry is a NEW decision on a new approval - the old one stays closed, which is the audit "
-               "trail finance wants."))
+               "store.expire() settles the approval with its own status - expiry is not a refusal, nobody said "
+               "no. The run resumes with a tool error that says the request was not decided in time, which the "
+               "model answers by escalating - so the follow-up the customer is promised is a record with an owner "
+               "and an SLA, not a sentence. A late approval after the expiry is a NEW decision on a new approval - "
+               "the old one stays closed, which is the audit trail finance wants."))
 
 
 def step_stop_and_ask(client):
@@ -237,8 +239,8 @@ def main() -> None:
     step(2, "Decided from another process")
     step_decide(store, run)
 
-    step(3, "Resumed by another worker: the dispatcher rule")
-    step_dispatch(store, client, db, run)
+    step(3, "Resumed by another worker: run() answers the decision first")
+    step_resume(store, client, db, run)
 
     step(4, "The rejected path")
     step_reject(store, client, memory_db())

@@ -31,7 +31,7 @@ spec = importlib.util.spec_from_file_location("ex11_starter", HERE.parents[0] / 
 starter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(starter)
 
-from labkit import get_client  # noqa: E402
+from labkit import get_client, is_mock  # noqa: E402
 
 d3 = starter.d3
 
@@ -72,6 +72,10 @@ def main() -> None:
     d3.table(rows, ["strategy and contract", "probes", "missed", "last summary (tokens)", "day cost"])
     print("The harness did not change - only what the contract asks the model to carry forward. Every field you add "
           "is paid for on every later turn (the summary is re-read), so add fields for facts a probe proves you need.")
+    if is_mock():
+        print("[mock] The stand-in summariser keeps what the instructions and the schema name (fault-code entries, "
+              "operator notes); a real model follows their meaning. What carries over is the method - probe, change "
+              "the contract, re-measure - not the wording.")
 
 
 if __name__ == "__main__":
