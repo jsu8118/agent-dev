@@ -60,6 +60,8 @@ the advanced surfaces produce — in the real API and, identically, in the mock.
 | a resumed run re-executes a tool | the result was never logged (crash before `tool.result`) | expected; make the tool's effect keyed (`ctx.effect`) so re-execution is a no-op |
 | an effect is `in_flight` on resume | the worker died between the downstream call and the commit | look the key up in the system of record, then `commit` or execute |
 | `decide()` seems to do nothing | deciding an approval twice | it is idempotent; the first decision stands |
+| a run asks for approval again after a decision | the decision was recorded but the run was resumed by code that ignores it | `run()` (and `resume_after_decision()`) answer settled approvals before continuing; do not re-create the run or re-execute the gated tool yourself |
+| `LeaseLost` while a run is executing | another worker took the run over after this worker's lease expired (it was too slow to heartbeat) | stop the worker's work (the runtime already did); shorten the work between heartbeats or lengthen `lease_ttl_s` |
 | the campaign pauses immediately with a budget stop | the persisted spend (`spend_usd`) already exceeds the cap | `--fresh` for a new campaign, or raise the cap deliberately |
 | `outbound blocked by the output guard` | the email names another customer or promises compensation | rewrite; the guard is right |
 | `slot is in region ...` / `lacks the skill ...` | booking outside the customer's region or without the remedy's skill | ask `get_engineer_slots` for the right region/skill; out-of-region visits need approval |

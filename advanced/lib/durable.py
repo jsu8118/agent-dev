@@ -17,9 +17,12 @@ Guarantees (each is tested in tests/test_advanced_durable.py):
   * every model response and every tool result is appended to the log before the next step;
   * a run resumed from the log never repeats a completed tool call (results are replayed), and a tool call
     with an idempotency key is executed at most once even if the log says "started" but not "finished";
-  * two workers cannot run the same run at once (a lease with heartbeats; a stale lease can be taken over);
-  * an approval pauses the run durably; `approve()`/`reject()` from any process resume it later;
-  * the messages array is append-only across a resume, so prompt caches and preserved thinking stay valid.
+  * two workers cannot run the same run at once (a lease with heartbeats; a stale lease can be taken over,
+    and a worker that loses its lease stops instead of writing on);
+  * an approval pauses the run durably; `decide()` from any process settles it, and the next `run()` (from
+    any worker) answers the gated tool call with the decision instead of asking again;
+  * the messages array is append-only across a resume, so prompt caches and preserved thinking stay valid;
+  * a model call the API rejects (4xx) is recorded and fails the run instead of leaving it "running" forever.
 """
 
 from __future__ import annotations
@@ -51,6 +54,8 @@ CREATE TABLE IF NOT EXISTS approvals (
 """
 
 STATUSES = ("pending", "running", "waiting_approval", "completed", "failed", "cancelled")
+APPROVAL_OUTCOMES = ("approved", "rejected", "expired", "cancelled")
+NON_RETRYABLE = (400, 401, 403, 404, 413, 422)       # HTTP statuses that a retry cannot fix
 
 
 def _now() -> str:
@@ -86,15 +91,14 @@ class RunStore:
 
     # ------------------------------------------------------------------ runs
     def create(self, kind: str, *, input: dict | None = None, tags: dict | None = None, run_id: str | None = None) -> "Run":
+        """Create a run; creating an existing run_id again returns it unchanged (idempotent)."""
         run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         now = _now()
-        conn = self._connect()
-        try:
-            conn.execute("INSERT INTO runs (run_id, kind, status, input, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-                         (run_id, kind, "pending", json.dumps(input or {}), json.dumps(tags or {}), now, now))
-        except sqlite3.IntegrityError:
-            pass                                           # idempotent creation: the same run_id returns the run
-        self.append(run_id, "run.created", {"kind": kind, "input": input or {}})
+        cur = self._connect().execute(
+            "INSERT OR IGNORE INTO runs (run_id, kind, status, input, tags, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (run_id, kind, "pending", json.dumps(input or {}), json.dumps(tags or {}), now, now))
+        if cur.rowcount == 1:
+            self.append(run_id, "run.created", {"kind": kind, "input": input or {}})
         return self.get(run_id)
 
     def get(self, run_id: str) -> "Run":
@@ -140,6 +144,7 @@ class RunStore:
         return cur.rowcount == 1
 
     def heartbeat(self, run_id: str, owner: str, ttl_s: float = 30.0) -> bool:
+        """Extend the lease. Returns False when this worker no longer holds it (another worker took over)."""
         cur = self._connect().execute("UPDATE runs SET lease_until = ? WHERE run_id = ? AND lease_owner = ?",
                                       (time.time() + ttl_s, run_id, owner))
         return cur.rowcount == 1
@@ -159,14 +164,14 @@ class RunStore:
     def effect_begin(self, key: str, run_id: str, tool: str) -> dict | None:
         """Claim an effect. Returns the stored result if it already completed, {"status": "started"} if a
         previous attempt started but never finished (the caller decides: check the system of record, or
-        treat as failed), or None when this is the first attempt."""
+        treat as failed), or None when this is the first attempt. Two racing claimants get one None."""
         conn = self._connect()
+        cur = conn.execute("INSERT OR IGNORE INTO effects (key, run_id, tool, status, at) VALUES (?,?,?,?,?)",
+                           (key, run_id, tool, "started", _now()))
+        if cur.rowcount == 1:
+            return None
         row = conn.execute("SELECT status, result FROM effects WHERE key = ?", (key,)).fetchone()
-        if row is not None:
-            return {"status": row["status"], "result": json.loads(row["result"]) if row["result"] else None}
-        conn.execute("INSERT INTO effects (key, run_id, tool, status, at) VALUES (?,?,?,?,?)",
-                     (key, run_id, tool, "started", _now()))
-        return None
+        return {"status": row["status"], "result": json.loads(row["result"]) if row["result"] else None}
 
     def effect_finish(self, key: str, result: Any) -> None:
         self._connect().execute("UPDATE effects SET status = 'done', result = ?, at = ? WHERE key = ?",
@@ -185,15 +190,23 @@ class RunStore:
         return approval_id
 
     def decide(self, approval_id: str, *, approved: bool, by: str, note: str = "") -> "Run":
+        """Settle a pending approval. Deciding twice is a no-op: the first decision stands, whoever was faster."""
+        return self._settle(approval_id, "approved" if approved else "rejected", by=by, note=note)
+
+    def expire(self, approval_id: str, *, by: str = "sweeper", note: str = "no decision before the deadline") -> "Run":
+        """Settle a pending approval as expired (a sweeper's job); the run resumes and the tool call gets a refusal."""
+        return self._settle(approval_id, "expired", by=by, note=note)
+
+    def _settle(self, approval_id: str, status: str, *, by: str, note: str) -> "Run":
+        assert status in APPROVAL_OUTCOMES, status
         conn = self._connect()
         row = conn.execute("SELECT * FROM approvals WHERE approval_id = ?", (approval_id,)).fetchone()
         if row is None:
             raise KeyError(approval_id)
-        if row["status"] != "pending":
-            return self.get(row["run_id"])                 # deciding twice is a no-op (idempotent)
-        status = "approved" if approved else "rejected"
-        conn.execute("UPDATE approvals SET status = ?, decided_by = ?, note = ?, decided_at = ? WHERE approval_id = ?",
-                     (status, by, note, _now(), approval_id))
+        cur = conn.execute("UPDATE approvals SET status = ?, decided_by = ?, note = ?, decided_at = ? "
+                           "WHERE approval_id = ? AND status = 'pending'", (status, by, note, _now(), approval_id))
+        if cur.rowcount == 0:                              # already settled by someone else
+            return self.get(row["run_id"])
         self.append(row["run_id"], "approval.decided", {"approval_id": approval_id, "status": status, "by": by, "note": note})
         self.set_status(row["run_id"], "pending")          # back in the queue: any worker may resume it
         return self.get(row["run_id"])
@@ -234,6 +247,10 @@ class ApprovalRequired(Exception):
         self.action = action
 
 
+class LeaseLost(RuntimeError):
+    """Raised when a worker's heartbeat finds that another worker took the run over: stop, do not write on."""
+
+
 class Crash(BaseException):
     """Used by the labs to simulate a worker dying at a chosen point.
 
@@ -263,6 +280,10 @@ def _tool_result(tool_use_id: str, result: dict) -> dict:
     if result.get("is_error"):
         block["is_error"] = True
     return block
+
+
+def _text_of(content: list[dict]) -> str:
+    return "".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
 
 
 @dataclass
@@ -395,25 +416,36 @@ class DurableRunner:
             return Outcome(run_id, run.status, reply=(run.result or {}).get("reply", ""))
         if run.status == "waiting_approval":
             pending = [a for a in self.store.approvals(run_id) if a["status"] == "pending"]
-            return Outcome(run_id, "waiting_approval", approval_id=pending[0]["approval_id"] if pending else None)
+            if pending:
+                return Outcome(run_id, "waiting_approval", approval_id=pending[0]["approval_id"])
         self.store.set_status(run_id, "running")
+        self._answer_decided(run_id)                       # a decision made while the run was parked
         messages, results, turns, replayed = self.rebuild(run_id)
         outcome = Outcome(run_id, "running", turns=turns, replayed_tools=replayed)
 
-        # Finish the tool round the last assistant turn started: replay the results the log holds, execute the rest.
         if messages and messages[-1]["role"] == "assistant":
             pending = [b for b in messages[-1]["content"] if b.get("type") == "tool_use"]
-            if pending:
-                answers, paused = self._answer_tools(run_id, pending, results, outcome, turns)
-                if paused is not None:
-                    return paused
-                messages.append({"role": "user", "content": answers})
+            if not pending:                                # the answer was logged; the worker died before recording it
+                return self._complete(run_id, outcome, messages)
+            # Finish the tool round the last assistant turn started: replay the results the log holds, execute the rest.
+            answers, paused = self._answer_tools(run_id, pending, results, outcome, turns)
+            if paused is not None:
+                return paused
+            messages.append({"role": "user", "content": answers})
 
         while outcome.turns < self.max_turns:
-            self.store.heartbeat(run_id, self.worker, self.lease_ttl_s)
+            if not self.store.heartbeat(run_id, self.worker, self.lease_ttl_s):
+                raise LeaseLost(f"run {run_id}: lease taken over by another worker; stopping")
             turn = outcome.turns + 1
-            response = self.client.beta.messages.create(model=self.model, max_tokens=self.max_tokens, system=self.system,
-                                                        tools=self.tools, messages=messages, **self.create_kwargs)
+            try:
+                response = self.client.beta.messages.create(model=self.model, max_tokens=self.max_tokens, system=self.system,
+                                                            tools=self.tools, messages=messages, **self.create_kwargs)
+            except Exception as exc:                        # a rejected request will not succeed on retry: record and fail
+                status = getattr(exc, "status_code", None)
+                if status in NON_RETRYABLE:
+                    self.store.append(run_id, "model.error", {"turn": turn, "status": status, "message": str(exc)[:500]})
+                    self.store.set_status(run_id, "failed", error=f"model call rejected ({status}): {str(exc)[:300]}")
+                raise
             content = [b.model_dump(exclude_none=True) if hasattr(b, "model_dump") else b for b in response.content]
             self.store.append(run_id, "model.response", {"turn": turn, "content": content,
                                                          "stop_reason": response.stop_reason,
@@ -423,17 +455,20 @@ class DurableRunner:
             outcome.turns = turn
             tool_uses = [b for b in content if b.get("type") == "tool_use"]
             if response.stop_reason != "tool_use" or not tool_uses:
-                outcome.reply = "".join(b.get("text", "") for b in content if b.get("type") == "text").strip()
-                outcome.status = "completed"
-                self.store.set_status(run_id, "completed", result={"reply": outcome.reply, "turns": outcome.turns})
-                outcome.messages = messages
-                return outcome
+                return self._complete(run_id, outcome, messages)
             answers, paused = self._answer_tools(run_id, tool_uses, results, outcome, turn)
             if paused is not None:
                 return paused
             messages.append({"role": "user", "content": answers})
         outcome.status = "failed"
         self.store.set_status(run_id, "failed", error=f"turn limit {self.max_turns} reached")
+        return outcome
+
+    def _complete(self, run_id: str, outcome: Outcome, messages: list[dict]) -> Outcome:
+        outcome.reply = _text_of(messages[-1]["content"])
+        outcome.status = "completed"
+        outcome.messages = messages
+        self.store.set_status(run_id, "completed", result={"reply": outcome.reply, "turns": outcome.turns})
         return outcome
 
     def _answer_tools(self, run_id: str, tool_uses: list[dict], results: dict[str, dict], outcome: Outcome,
@@ -476,31 +511,30 @@ class DurableRunner:
             raise Crash(f"simulated crash {point} at turn {turn}")
 
     # ------------------------------------------------------------------ resuming after an approval
-    def resume_after_decision(self, run_id: str) -> Outcome:
-        """Answer the tool call that was waiting for approval, then continue the run."""
-        run = self.store.get(run_id)
-        decided = [a for a in self.store.approvals(run_id) if a["status"] in ("approved", "rejected")]
-        pending_tool = None
-        for a in reversed(decided):
-            tid = a["action"].get("tool_use_id")
-            if tid and tid not in {e["tool_use_id"] for e in self.store.events(run_id, types=("tool.result",))}:
-                pending_tool = a
-                break
-        if pending_tool is not None:
-            action = pending_tool["action"]
-            if pending_tool["status"] == "approved":
-                ctx = ToolContext(run_id=run_id, store=self.store, tool_use_id=action["tool_use_id"],
-                                  idempotency_key=f"{run_id}:{action['tool_use_id']}:approved")
+    def _answer_decided(self, run_id: str) -> None:
+        """Answer every settled approval whose gated tool call has no result yet: execute it once if approved
+        (the executor sees `_approved: True`), else log a refusal the model can explain to the user."""
+        answered = {e["tool_use_id"] for e in self.store.events(run_id, types=("tool.result",))}
+        for approval in self.store.approvals(run_id):
+            action = approval["action"]
+            tid = action.get("tool_use_id")
+            if approval["status"] not in APPROVAL_OUTCOMES or not tid or tid in answered:
+                continue
+            if approval["status"] == "approved":
+                ctx = ToolContext(run_id=run_id, store=self.store, tool_use_id=tid, idempotency_key=f"{run_id}:{tid}:approved")
                 try:
                     result = self.execute(action["name"], {**action["input"], "_approved": True}, ctx)
                 except Exception as exc:
                     result = {"error": f"{type(exc).__name__}: {exc}"}
             else:
-                result = {"error": f"Declined by {pending_tool['decided_by']}: {pending_tool['note'] or 'not approved'}. "
+                verdict = {"rejected": "Declined", "expired": "Not decided in time", "cancelled": "Cancelled"}[approval["status"]]
+                result = {"error": f"{verdict} by {approval['decided_by']}: {approval['note'] or 'not approved'}. "
                           "Tell the customer the request could not be approved."}
+            is_error = isinstance(result, dict) and "error" in result
             text = result if isinstance(result, str) else json.dumps(result, default=str)
-            self.store.append(run_id, "tool.result", {"tool_use_id": action["tool_use_id"], "name": action["name"],
-                                                      "content": text, "is_error": "error" in text})
-        if run.status == "waiting_approval":
-            self.store.set_status(run_id, "pending")
+            self.store.append(run_id, "tool.result", {"tool_use_id": tid, "name": action["name"], "content": text, "is_error": is_error})
+            answered.add(tid)
+
+    def resume_after_decision(self, run_id: str) -> Outcome:
+        """Resume a run whose approval was decided. `run()` does the same; this name keeps the intent visible."""
         return self.run(run_id)

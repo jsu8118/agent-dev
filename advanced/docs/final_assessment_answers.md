@@ -6,7 +6,7 @@
 
 **2. c.** The log gives replay, resumption and an append-only rebuild. Exactly-once effects need *keyed* effects and a downstream system that honours the keys; the log only records that a step began. (Day 1, lab 03.)
 
-**3.** Prompt caching matches the byte-identical prefix of the previous request, and preserved-thinking prefix binding (enforced on Fable 5.1, recorded on Opus 5.5) signs thinking blocks to the conversation prefix. A "functionally equivalent" rebuild invalidates the cache and breaks the binding (a 400, or dropped blocks). That is why `DurableRunner.rebuild()` re-creates the exact assistant turns and tool-result messages from the log.
+**3.** Prompt caching matches the byte-identical prefix of the previous request, and preserved-thinking prefix binding (enforced on Fable 5.1 and, for accounts created on or after 2026-08-31, on Opus 5.5; recorded and opt-in on older accounts, which is what the mock models) signs thinking blocks to the conversation prefix. A "functionally equivalent" rebuild invalidates the cache and breaks the binding (a 400, or dropped blocks). That is why `DurableRunner.rebuild()` re-creates the exact assistant turns and tool-result messages from the log.
 
 **4. b.** Leases protect against dead workers, not slow ones; heartbeats keep a live worker's lease alive, and keyed effects make the rare duplicate harmless. Shorter leases (a) make the race more likely; longer ones (d) delay takeover after a real death; a process lock (c) does not span workers.
 
@@ -34,7 +34,7 @@
 
 **14. b.** Turn-scoped system messages go after the user message they apply to (tool results first, then the reminder) and are rejected when directly followed by an assistant turn; once a later user message exists they render nothing.
 
-**15.** The signed thinking block no longer matches the prefix: on Fable 5.1 the request fails with a `prefix_mismatch` 400. With `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under `thinking-binding-controls-2026-08-01`, the API drops the block and continues; the harness learns what was dropped from `response.input_transformations` (`{"type": "thinking_dropped", "path": ...}`). Opus 5.5 records instead of enforcing (`thinking_mismatch_allowed`) unless the behaviour is set.
+**15.** The signed thinking block no longer matches the prefix: on Fable 5.1 the request fails with a `prefix_mismatch` 400. With `thinking.block_binding.prefix_mismatch_behavior: "drop_block"` under `thinking-binding-controls-2026-08-01`, the API drops the block and continues; the harness learns what was dropped from `response.input_transformations` (`{"type": "thinking_dropped", "path": ...}`). Opus 5.5 enforces the same check on accounts created on or after 2026-08-31; older accounts only get it recorded (`thinking_mismatch_allowed`) unless the behaviour is set - the mock models that older-account behaviour.
 
 **16. b.** Blocks are bound to the producing model family; Opus 5 cannot read Opus 5.5's, so they are dropped and listed. Fable 5.1 can read Opus 5.5 blocks. (a) is what happens for a prefix mismatch on Fable 5.1, not for a model switch.
 

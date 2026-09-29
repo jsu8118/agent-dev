@@ -62,7 +62,8 @@ thinking={"type": "adaptive", "display": "updates"}                       # beta
 ```python
 thinking={"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}   # or "error"
 #   betas=["thinking-binding-controls-2026-08-01"]; response.input_transformations -> [{"type": "thinking_dropped", "path": ...}]
-# Fable 5.1: prefix binding enforced (400 prefix_mismatch) | Opus 5.5: recorded (thinking_mismatch_allowed) | Opus 5: none
+# Fable 5.1: prefix binding enforced (400 prefix_mismatch) | Opus 5.5: enforced on accounts created >= 2026-08-31, else recorded
+#   (thinking_mismatch_allowed; the mock models the older-account behaviour) | Opus 5: none
 # model binding: Opus 5.5 blocks -> Opus 5 dropped; Fable 5.1 reads Opus 5.5 blocks; compaction resets the prefix
 # rule: append-only history (never reword, drop or reorder anything before a thinking block)
 ```

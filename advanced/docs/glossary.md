@@ -81,13 +81,13 @@ Terms introduced in the second week. The first course's [glossary](../../docs/gl
 
 **Pre-warming** — a `max_tokens: 0` request that writes the cache before a fan-out, so the concurrent requests read instead of all writing. Day 3.
 
-**Prefix binding** — thinking signatures bound to the conversation prefix (enforced on Fable 5.1, recorded on Opus 5.5 for new accounts); breaking edits are a 400 or a dropped block (`prefix_mismatch_behavior`). Day 3.
+**Prefix binding** — thinking signatures bound to the conversation prefix; enforced on Fable 5.1 and, for accounts created on or after 2026-08-31, on Opus 5.5 (older accounts: recorded, opt-in - the behaviour the mock models); breaking edits are a 400 or a dropped block (`prefix_mismatch_behavior`). Day 3.
 
 **Programmatic tool calling (PTC)** — the model calls client tools from code (`await tool_name({...})`); the response pauses with `caller`-tagged `tool_use` blocks and resumes when their results arrive. Day 2.
 
 **Quarantine** — routing a message to a human queue without any model call because a security screen matched. Day 5, Day 7.
 
-**Recorded vs enforced binding** — Opus 5.5 lists prefix mismatches as `thinking_mismatch_allowed` unless `prefix_mismatch_behavior` is set; Fable 5.1 rejects them. Day 3.
+**Recorded vs enforced binding** — on older accounts Opus 5.5 lists prefix mismatches as `thinking_mismatch_allowed` unless `prefix_mismatch_behavior` is set (recorded); Fable 5.1, and Opus 5.5 on accounts created on or after 2026-08-31, reject them (enforced). Day 3.
 
 **Replay** — feeding a run's logged tool results back into a new run to reproduce a bug offline; a *fork* changes one result to explore an alternative. Day 1.
 

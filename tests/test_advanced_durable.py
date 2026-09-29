@@ -266,3 +266,78 @@ def test_store_on_disk_is_shared_between_store_instances(tmp_path):
     assert a.create("billing", run_id=run.id).id == run.id                   # idempotent creation
     assert [r.id for r in b.list(kind="billing")] == [run.id]
     assert json.loads(json.dumps(b.get(run.id).input)) == REQUEST
+
+
+# ------------------------------------------------------------------ the guarantees added after Day 1's review
+def test_plain_run_answers_a_decided_approval_instead_of_asking_again():
+    store, ledger = RunStore(), Ledger()
+    run = store.create("billing", input={"message": "Please apply the $4000 credit for the failed KP-250-S."})
+    runner = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1")
+    outcome = runner.run(run.id)
+    store.decide(outcome.approval_id, approved=True, by="ops.manager")
+    resumed = make_runner(store, make_executor(ledger, approval_over=2500), worker="w2").run(run.id)   # not resume_after_decision
+    assert resumed.status == "completed" and "CR-0001" in resumed.reply and ledger.calls == 1
+    assert [a["status"] for a in store.approvals(run.id)] == ["approved"]                          # no second approval
+
+
+def test_expired_approval_resumes_with_a_refusal():
+    store, ledger = RunStore(), Ledger()
+    run = store.create("billing", input={"message": "Please apply the $4000 credit for the failed KP-250-S."})
+    outcome = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(run.id)
+    assert store.expire(outcome.approval_id).status == "pending"
+    resumed = make_runner(store, make_executor(ledger, approval_over=2500), worker="w1").run(run.id)
+    assert resumed.status == "completed" and "could not apply" in resumed.reply and "Not decided in time" in resumed.reply
+    assert ledger.calls == 0
+
+
+def test_crash_after_the_final_response_completes_from_the_log_without_a_model_call():
+    store, ledger = RunStore(), Ledger()
+    run = store.create("billing", input=REQUEST)
+    with pytest.raises(Crash):
+        make_runner(store, make_executor(ledger), worker="w1", crash_at=("after_model", 3)).run(run.id)
+    requests_before = len(mock_api().request_log)
+    outcome = make_runner(store, make_executor(ledger), worker="w2").run(run.id)
+    assert outcome.status == "completed" and "CR-0001" in outcome.reply
+    assert len(mock_api().request_log) == requests_before                     # the answer was already in the log
+
+
+def test_a_worker_that_lost_its_lease_stops():
+    from advanced.lib.durable import LeaseLost
+    store, ledger = RunStore(), Ledger()
+    run = store.create("billing", input=REQUEST)
+    calls = []
+
+    def execute(name, tool_input, ctx):
+        calls.append(name)
+        time.sleep(0.03)                                   # slower than the (tiny) lease: it expires mid-tool
+        assert store.acquire(run.id, "usurper", ttl_s=30)  # another worker takes the run over
+        return make_executor(ledger)(name, tool_input, ctx)
+
+    with pytest.raises(LeaseLost):
+        make_runner(store, execute, worker="w1", lease_ttl_s=0.01).run(run.id)
+    assert calls == ["lookup_account"] and ledger.calls == 0                 # it stopped before the credit
+
+
+def test_store_claims_are_race_safe_and_idempotent():
+    store = RunStore()
+    run = store.create("billing", input=REQUEST)
+    store.create("billing", input={"message": "other"}, run_id=run.id)          # a repeated create changes nothing
+    assert [e["type"] for e in store.events(run.id)] == ["run.created"] and store.get(run.id).input == REQUEST
+    assert store.effect_begin("k1", run.id, "t") is None
+    assert store.effect_begin("k1", run.id, "t") == {"status": "started", "result": None}
+    approval = store.request_approval(run.id, {"summary": "x"})
+    store.decide(approval, approved=False, by="a")
+    store.decide(approval, approved=True, by="b")                              # loses: the first decision stands
+    assert store.approvals(run.id)[0]["status"] == "rejected"
+
+
+def test_a_rejected_model_call_fails_the_run_and_raises():
+    import anthropic
+    store, ledger = RunStore(), Ledger()
+    run = store.create("billing", input=REQUEST)
+    runner = make_runner(store, make_executor(ledger), worker="w1",
+                         create_kwargs={"extra_body": {"temperature": 0.2}})     # sampling parameters: a 400 on Opus 5
+    with pytest.raises(anthropic.BadRequestError):
+        runner.run(run.id)
+    assert store.get(run.id).status == "failed" and "400" in (store.get(run.id).error or "")
+    assert [e["type"] for e in store.events(run.id)][-2:] == ["model.error", "run.status"]
