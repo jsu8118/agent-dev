@@ -81,8 +81,9 @@ As before, the mock does not think: answers come from rule-based scenario polici
 mechanics offline; use live mode to judge quality, cost and latency.
 
 **Live-mode cost.** The advanced labs run longer loops than the first course: expect a few dollars per day on Claude
-Opus 5, and up to ~$10 for Day 3's 40-turn runs and Day 6's repeated evaluations. Every lab prints its cost;
-`python scripts/smoke_live.py --only advanced --cap 5` runs a representative subset with a hard cap.
+Opus 5, about $6 for Day 4's swarms, and up to ~$30 for Day 3's full-length 40-turn runs (about $15 with `--turns 14`
+on labs 01-02). Every lab prints its cost; `python scripts/smoke_live.py --only advanced --cap 5` runs a representative
+subset with a hard cap.
 
 ## Repository layout (this course)
 

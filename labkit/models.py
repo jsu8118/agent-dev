@@ -47,6 +47,8 @@ class ModelSpec:
     # --- advanced-course surfaces -------------------------------------------------
     per_message_effort: bool = False     # {"role": "system", "content": [], "output_config": {"effort"}} (beta)
     clear_at: bool = False               # turn-scoped system messages: clear_at "next_user_message" (beta)
+    display_updates: bool = False        # thinking.display "updates": progress thinking before tool calls (beta)
+    task_budgets: bool = True            # output_config.task_budget (beta)
     inline_tools: bool = False           # tool_addition / tool_removal blocks in a system message (beta)
     tool_search: bool = True             # tool_search_tool_regex / _bm25 server tools
     code_execution: bool = True          # code_execution_* server tools
@@ -66,7 +68,7 @@ CATALOG: dict[str, ModelSpec] = {
             cache_read_multiplier=0.025, thinking_default="adaptive", disable_thinking="no",
             forced_tool_choice=False, mid_conversation_system=True, cache_min_tokens=512,
             refusal_classifiers=True, server_fallbacks=True,
-            per_message_effort=True, clear_at=True, inline_tools=True, thinking_prefix_binding="enforced",
+            per_message_effort=True, clear_at=True, inline_tools=True, display_updates=True, thinking_prefix_binding="enforced",
             thinking_family="fable-5-1",
             notes=("thinking always on; control depth with effort", "forced tool_choice returns 400",
                    "thinking blocks bound to the conversation prefix and readable only by Fable/Mythos 5.1"),
@@ -75,7 +77,8 @@ CATALOG: dict[str, ModelSpec] = {
             id="claude-fable-5", display_name="Claude Fable 5", tier="frontier",
             context_window=1_000_000, max_output=128_000, input_price=10.0, output_price=50.0,
             thinking_default="adaptive", disable_thinking="no", mid_conversation_system=True,
-            cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True, inline_tools=True,
+            cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True, inline_tools=True, clear_at=True,
+            display_updates=True,
         ),
         ModelSpec(
             id="claude-opus-5-5", display_name="Claude Opus 5.5", tier="flagship",
@@ -83,7 +86,7 @@ CATALOG: dict[str, ModelSpec] = {
             cache_read_multiplier=0.05, thinking_default="adaptive", disable_thinking="no",
             default_effort="medium", forced_tool_choice=False, mid_conversation_system=True,
             cache_min_tokens=512, refusal_classifiers=True, server_fallbacks=True,
-            per_message_effort=True, clear_at=True, inline_tools=True, thinking_prefix_binding="recorded",
+            per_message_effort=True, clear_at=True, inline_tools=True, display_updates=True, thinking_prefix_binding="recorded",
             thinking_family="opus-5-5",
             notes=("effort defaults to medium", "forced tool_choice returns 400",
                    "thinking blocks readable only by Fable/Mythos 5.1"),
@@ -99,7 +102,7 @@ CATALOG: dict[str, ModelSpec] = {
         ModelSpec(
             id="claude-opus-4-8", display_name="Claude Opus 4.8", tier="flagship",
             context_window=1_000_000, max_output=128_000, input_price=5.0, output_price=25.0,
-            thinking_default="off", mid_conversation_system=True, cache_min_tokens=1024, inline_tools=True,
+            thinking_default="off", mid_conversation_system=True, cache_min_tokens=1024, inline_tools=True, clear_at=True,
         ),
         ModelSpec(
             id="claude-opus-4-7", display_name="Claude Opus 4.7", tier="flagship",
@@ -115,8 +118,8 @@ CATALOG: dict[str, ModelSpec] = {
         ModelSpec(
             id="claude-sonnet-5", display_name="Claude Sonnet 5", tier="balanced",
             context_window=1_000_000, max_output=128_000, input_price=2.0, output_price=10.0,
-            thinking_default="adaptive", sampling_params="default-only", cache_min_tokens=1024,
-            notes=("new tokenizer: ~30% more tokens than Sonnet 4.6 for the same text",),
+            thinking_default="adaptive", sampling_params="default-only", cache_min_tokens=1024, task_budgets=False,
+            notes=("new tokenizer: ~30% more tokens than Sonnet 4.6 for the same text", "task budgets arrive with Sonnet 5.5"),
         ),
         ModelSpec(
             id="claude-sonnet-4-6", display_name="Claude Sonnet 4.6", tier="balanced",
@@ -129,7 +132,7 @@ CATALOG: dict[str, ModelSpec] = {
             context_window=200_000, max_output=64_000, input_price=1.0, output_price=5.0,
             thinking_default="off", supports_adaptive=False, budget_tokens="required",
             effort_levels=(), default_effort=None, sampling_params="yes", prefill=True,
-            cache_min_tokens=4096, programmatic_tool_calling=False,
+            cache_min_tokens=4096, programmatic_tool_calling=False, task_budgets=False,
             notes=("thinking only via budget_tokens", "no effort parameter"),
         ),
     ]

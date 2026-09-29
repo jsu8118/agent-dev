@@ -172,7 +172,7 @@ def _validate_thinking_config(body: dict, spec: ModelSpec, betas: set[str]) -> N
             if DISPLAY_UPDATES_BETA not in betas:
                 raise bad_request("thinking.display: Input should be 'summarized' or 'omitted' (\"updates\" requires the "
                                   f"anthropic-beta header {DISPLAY_UPDATES_BETA!r})")
-            if spec.tier != "frontier":
+            if not spec.display_updates:
                 raise bad_request(f'thinking.display: "updates" is not supported for {spec.id}')
         elif display not in ("summarized", "omitted"):
             raise bad_request("thinking.display: Input should be 'summarized' or 'omitted'")
@@ -199,6 +199,8 @@ def _validate_output_config(body: dict, spec: ModelSpec, betas: set[str]) -> Non
     if budget is not None:
         if TASK_BUDGET_BETA not in betas:
             raise bad_request(f"output_config.task_budget: requires the anthropic-beta header {TASK_BUDGET_BETA!r}")
+        if not spec.task_budgets:
+            raise bad_request(f"output_config.task_budget: not supported for {spec.id}")
         if not isinstance(budget, dict) or budget.get("type") != "tokens" or not isinstance(budget.get("total"), int):
             raise bad_request('output_config.task_budget: expected {"type": "tokens", "total": <int>}')
         if budget["total"] < 20_000:
@@ -557,7 +559,9 @@ def validate_messages_request(body: dict, headers: dict[str, str], *, lenient: b
             raise bad_request(f"messages.{i}.role: Input should be 'user' or 'assistant'")
         if "content" not in m:
             raise bad_request(f"messages.{i}.content: Field required")
-    if messages[0].get("role") != "user":
+    first = messages[0]
+    effort_only = first.get("role") == "system" and first.get("content") == [] and (first.get("output_config") or {}).get("effort")
+    if first.get("role") != "user" and not effort_only:            # an effort-only system message may sit anywhere, including first
         raise bad_request('messages: first message must use the "user" role')
 
     for param in ("temperature", "top_p", "top_k"):
