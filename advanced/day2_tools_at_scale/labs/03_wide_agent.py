@@ -17,7 +17,7 @@ Run
 
 What to observe
     * W1: the search and the core call happen in the same response; the discovered tool is called on the next turn.
-    * Every turn after the very first request reads the tools+system prefix from the cache ("read" >= 1,338).
+    * After each agent's first request, every turn reads its tools+system prefix from the cache (wide: "read" >= 1,452).
     * A multi-clause task searches once with a combined query and a larger `limit` - more definitions land in the tail.
     * The core-only agent finishes the tasks it can only partly, or escalates them; its requests are cheaper.
 """

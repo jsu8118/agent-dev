@@ -17,7 +17,7 @@ Run
     python advanced/day2_tools_at_scale/labs/04_mid_conversation_tool_changes.py
 
 What to observe
-    * Variant A: the first request of every phase reads almost nothing and rewrites the whole conversation.
+    * Variant A: the first request of every phase reads at most the tools+system prefix and rewrites the conversation.
     * Variant B: cache reads keep growing through every phase change; writes stay about one turn's worth.
     * The total and the cost of A vs B in the summary table.
     * The inline definition: get_recall_status is added by value and called on the same turn.
