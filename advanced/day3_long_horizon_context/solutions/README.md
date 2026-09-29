@@ -45,13 +45,13 @@ listed; with the field set to either value, enforced). A block is affected only 
 | c | 200 | `thinking_mismatch_allowed` x3 (`.1`, `.3`, `.5`) | the system prompt precedes every block; recorded, not enforced, because the field is unset - the blocks still reach the model |
 | d | 200 | `thinking_dropped`, `model_binding_mismatch` x3 | Opus 5 cannot read Opus 5.5 blocks; the model check runs first, so `drop_block` plays no part |
 | e | 200 | `[]` | Opus 5 blocks carry no conversation binding and Fable 5.1 reads them; the edit costs a cache restart, nothing else |
-| f | 200 | `[]` | append-only: the cleared message is still in the transcript byte for byte (it just renders nothing); the new one is appended |
-| g | 200 | `[]` | the tool set is compared as a set, and `max_tokens` is not part of the prefix |
+| f | 200 | `[]` with the header (no field without it) | append-only: the cleared message is still in the transcript byte for byte (it just renders nothing); the new one is appended |
+| g | 200 | `[]` with the header (no field without it) | the tool set is compared as a set, and `max_tokens` is not part of the prefix |
 | h | 400 at the retained turn's thinking block | - (no header) | keep-tail: that block was minted with the full history in front of it. Strip the retained turns' thinking, send `drop_block`, use simple compaction, or on-demand compaction (beta `compact-2026-09-04`), which is designed to keep retained turns' blocks valid |
 
 Lab 03 runs each of these shapes (the edits, `drop_block`, the model switches, keep-tail compaction), lab 04 the
-turn-scoped case, and exercise 10's bench a-d on six-block conversations. Tempting wrong answers: (a) "the edit is in
-a user message, so the thinking is unaffected" - the prefix is every earlier message, whoever wrote it; (d) "`drop_block`
+turn-scoped case, and exercise 10's bench a-d on six-block conversations. Tempting wrong answers: (a) "the edit is in a
+user message, so the thinking is unaffected" - the prefix is every earlier message, whoever wrote it; (d) "`drop_block`
 reports prefix drops" - no prefix is compared when the model cannot read the block at all; (e) "any edit before a
 thinking block breaks it on Fable 5.1" - only blocks that recorded a prefix can mismatch one.
 
@@ -91,8 +91,9 @@ g. **The one-line report**: the budget was wrong, and the harness made it worse.
    minutes each. The model did what a budget asks: it paced down from Cobalt (173 and then 106 output tokens a turn,
    against 336 and 247 under the 100k budget) and answered the report with essentials. Change three things: size the
    budget from measurement with a margin (90,000, exercise 7); stop routing bulk through the budgeted loop (reader
-   subagents turn 15,000-token exports into contracts of a few hundred); and have the harness warn when the spend
-   passes 90% before the report, so a budget that is too small is caught by the harness, not by the billing office.
+   subagents turn 15,000-token exports into contracts - lab 06's six came to 976 tokens); and have the harness warn when
+   the spend passes 90% before the report, so a budget that is too small is caught by the harness, not by the billing
+   office.
 
 ## 4. Lookback misses in a 40-turn session
 
@@ -116,8 +117,8 @@ a. Normally turn 21 reads C(20) = 5,000 + 20 x 1,500 = 35,000 tokens at 0.1x and
    (3,500 + 1,875) x $5/MTok = **$0.0269**. When it misses, it reads only the 5,000-token prefix and re-writes the
    30,000 tokens of history plus the new 1,500: (500 + 39,375) x $5/MTok = **$0.1994**, 7.4 times a normal turn.
 b. A miss moves the history C(t-1) - P from the read column (0.1x) to the write column (1.25x): extra = 1,500 (t-1) x
-   1.15 x $5/MTok. Over t = 6, 11, ..., 31 the history terms are 5 + 10 + ... + 30 = 105 blocks of 1,500 tokens:
-   105 x 1,500 x 1.15 x $5/MTok = **$0.9056**. Each miss costs more than the last, because the history grows.
+   1.15 x $5/MTok. Over t = 6, 11, ..., 31 the history terms are 5 + 10 + ... + 30 = 105 turns' worth of 1,500
+   tokens: 105 x 1,500 x 1.15 x $5/MTok = **$0.9056**. Each miss costs more than the last, because the history grows.
 c. Without misses the day reads 40 x 5,000 + 1,500 x (0 + 1 + ... + 39) = 1,370,000 tokens at 0.1x and writes 40 x
    1,500 = 60,000 at 1.25x: (137,000 + 75,000) x $5/MTok = **$1.06** (the prefix's first write, $0.03, left out). With
    the misses, **$1.97 - six requests out of forty add 85%** to the input bill.
@@ -184,6 +185,7 @@ Exercise 6 - pre-warming and keep-alive
   30 min                   6             $0.0450               $0.3675             $0.2250
   45 min                   9             $0.0675               $0.3675             $0.2250
   70 min                  15             $0.1125               $0.3675             $0.5925
+  '1-hour TTL premium' = what writing the 30K context at 2x instead of 1.25x costs (the entry then survives gaps under an hour; past an hour it expires as well). Reads at 0.025x make pings nearly free.
   (c) Claude Opus 5: a ping costs $0.0150, the 1-hour premium $0.1125; 7 pings cost no more than the premium, so the keep-alive wins for gaps up to about 36 minutes, the 1-hour TTL from there to 60
   (c) Claude Fable 5.1: a ping costs $0.0075, the 1-hour premium $0.2250; 30 pings cost no more than the premium, so the keep-alive wins at every gap the 1-hour TTL can bridge (up to 60 minutes)
 ```
@@ -244,7 +246,7 @@ d. **Per day or per visit.** For a day: it is the unit the service manager plans
    more on a hard diagnosis and less on "noted"; one number. Against: early overspend is paid for by the late sites and
    the report (the 64k arm), and the harness must carry `remaining` across every reset. For a visit: it matches the
    harness's reset boundaries (no `remaining` bookkeeping), isolates a bad site from the rest of the day, and the report
-   can be a task of its own. Against: visits vary six-fold (2,879 to 19,169 tokens), so a per-visit budget needs a size
+   can be a task of its own. Against: visits vary almost sevenfold (2,879 to 19,169 tokens), so a per-visit budget needs a size
    per visit type (monitored site with an export or not - the site brief tells you), and the daily total is less
    predictable. Kestrel budgets per technician-day, because that is the unit the manager plans in and the harness
    already counts spend; a per-visit budget would be the better choice for a harness without that accounting.
@@ -479,7 +481,8 @@ Exercise 12 - pre-warming scheduler and lookback-aware breakpoints
   ----------------------------------  ----------  -----------
   no intermediate breakpoint               1,352       15,586
   place_breakpoints()                     16,681          257
-A turn that appends 60 blocks: 60 blocks after a 1-position gap needs 3 intermediate breakpoints but only 2 are free - split the turn into two requests
+[mock] A pre-warm's entry becomes readable 0.5 s after it starts - the stand-in for time to first token. Live, wait for the max_tokens=0 response itself: it returns after prefill.
+A turn that appends 60 blocks: 60 blocks after a 1-position gap needs 3 intermediate breakpoints but only 2 are free - merge blocks (the lookback counts blocks, not tokens) or split the turn
 ```
 
 **`schedule()`** groups the requests by what the cache key is made of - model, system and tools, with `cache_control`

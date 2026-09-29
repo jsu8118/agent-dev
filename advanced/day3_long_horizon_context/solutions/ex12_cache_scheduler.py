@@ -73,7 +73,8 @@ def place_breakpoints(blocks: list[dict], gap: int, slots: int) -> list[dict]:
         reach += LOOKBACK
     if len(marks) > 4 - slots:
         raise ValueError(f"{len(blocks)} blocks after a {gap}-position gap needs {len(marks)} intermediate breakpoints "
-                         f"but only {4 - slots} are free - split the turn into two requests")
+                         f"but only {4 - slots} are free - merge blocks (the lookback counts blocks, not tokens) "
+                         "or split the turn")
     out = [dict(b) for b in blocks]
     for b in marks:
         out[b]["cache_control"] = {"type": "ephemeral"}

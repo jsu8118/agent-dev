@@ -63,6 +63,14 @@ mock-mode output. In live mode the numbers and wording differ; the shapes do not
 two labs replay the full day several times (simulated totals: lab 01 about $8.90, lab 02 about $11.60, the other five
 about $7.30 together); `--turns 14` cuts the first two by more than half, and `--strategies` trims lab 02 further.
 
+**Betas used today.** `task-budgets-2026-03-13`, `mid-conversation-output-config-2026-07-01` and
+`thinking-display-updates-2026-08-18` (section 2); `compact-2026-01-12` and `context-management-2025-06-27` (section 3);
+`thinking-binding-controls-2026-08-01` (section 4); `mid-conversation-system-clear-at-2026-08-21` (section 5); and
+`agent-memory-2026-07-22`, taught from the docs (section 6). A dated header pins the request shape you coded against.
+When a beta ends, the header is no longer needed and the fields move to the non-beta `client.messages.create(...)` path,
+and names or defaults can change on the way - which is why each lab keeps its headers in named constants and sends
+beta fields only through `client.beta.messages.create(...)`: the change is then a small, visible diff.
+
 ---
 
 ## 1. The long-horizon failure modes, and the levers
@@ -118,18 +126,20 @@ every turn you keep sending it. The first is a safety net, the second a dial, th
 | models (this course) | all | Opus 5, Opus 5.5, Fable 5.1 (not Haiku 4.5) | Opus 5, Opus 5.5, Fable 5.1 - Fable 5 is a 400 | Opus 5, Opus 5.5, Fable 5, Fable 5.1 (docs: confirm at launch); not Sonnet 5 |
 
 **Per-message effort** is a system message with empty content: `{"role": "system", "content": [], "output_config":
-{"effort": "low"}}`. It carries no text, so the placement rules of section 5 do not apply to it; the latest one wins
-and it holds until another changes it. Lowering effort this way is reliable; raising it works best for large jumps
-(`low` to `xhigh`). Prefer it to changing the top-level `effort` between requests: a top-level change restarts the
-messages cache, and (documented for Fable 5.1) steers less reliably, because the model stays consistent with the replies
-it wrote at the old level. Unsupported models answer `output_config.effort requires a model that supports per-turn effort; this model does not`.
+{"effort": "low"}}`. It carries no text, so the placement rules of section 5 do not apply to it; the latest one wins and
+it holds until another changes it. Lowering effort this way is reliable; raising it works best for large jumps (`low` to
+`xhigh`). Prefer it to changing the top-level `effort` between requests: a top-level change restarts the messages cache,
+and (documented for Fable 5.1) steers less reliably, because the model stays consistent with the replies it wrote at the
+old level. Unsupported models answer `output_config.effort requires a model that supports per-turn effort; this model
+does not`.
 
 **Task budgets** go in `output_config`: `{"task_budget": {"type": "tokens", "total": 100000}}` with the beta header
 `task-budgets-2026-03-13`; `total` must be at least 20,000. The budget counts what the model generates (thinking
-included) and the tool results it reads - not the full history you resend on each request. It is advisory: the model may finish less thoroughly when it runs low, and it says so. Leave the optional
-`remaining` field unset in a normal loop; pass it only when you rewrote history (a summary reset, a client-side
-compaction) and the server can no longer see what was spent. A Managed Agents session budget (Day 4) is a different
-thing: a hard, dollar-denominated cap the platform enforces.
+included) and the tool results it reads - not the full history you resend on each request. It is advisory: the model may
+finish less thoroughly when it runs low, and it says so. Leave the optional `remaining` field unset in a normal loop;
+pass it only when you rewrote history (a summary reset, a client-side compaction) and the server can no longer see what
+was spent. A Managed Agents session budget (Day 4) is a different thing: a hard, dollar-denominated cap the platform
+enforces.
 
 **Progress updates.** On the Fable models (and, per the platform docs, Claude Opus 5.5), text between tool calls comes
 back as short `thinking` blocks - empty under the default `display: "omitted"`, which is why a long agentic turn can
@@ -301,11 +311,11 @@ strip blocks on a switch, the API already leaves out what the target cannot read
 so a downgrade *hides* an edit for one request - the edit surfaces as a 400 on the next Fable 5.1 turn.
 
 **Where compaction resets the prefix.** Server-side compaction and context editing never count as edits: the check
-compares the conversation *as you sent it*, and after a compaction block the checked prefix starts at the block. Client-side,
-simple compaction (a summary plus the new turn, nothing older) is clean because nothing bound to the old transcript is
-replayed. *Keep-tail* compaction - a summary plus the last few turns verbatim - fails: the retained turns' thinking was
-minted with the full history in front of it. Strip those turns' thinking blocks (text and tool calls stay) or send
-`drop_block`; background compaction that swaps a summary in while the conversation continues fails the same way.
+compares the conversation *as you sent it*, and after a compaction block the checked prefix starts at the block.
+Client-side, simple compaction (a summary plus the new turn, nothing older) is clean because nothing bound to the old
+transcript is replayed. *Keep-tail* compaction - a summary plus the last few turns verbatim - fails: the retained turns'
+thinking was minted with the full history in front of it. Strip those turns' thinking blocks (text and tool calls stay)
+or send `drop_block`; background compaction that swaps a summary in while the conversation continues fails the same way.
 
 **The harness compatibility checklist.** Freeze the top-level system prompt and the tool definitions for the life of a
 conversation; append system messages for changes; declare every tool at session start (deferred where needed); store
@@ -356,11 +366,11 @@ input; text inside a user turn - including a `<system-reminder>` your harness wr
 technician pasted from a customer's e-mail. That matters for anything security-relevant (Day 5): a reminder like "safety
 faults here are escalated, never repaired" belongs in a system message.
 
-**Token accounting.** Lab 04 counts, with `count_tokens`, what the model reads of the status reminder on each turn of the
-Cobalt visit: turn-scoped delivery costs one copy per turn (55 tokens, 385 over the visit); persistent messages and kept
-injections accumulate (1,540 and 1,680 by the seventh turn); inject-then-delete reads one copy but rewrote the previous
-user turn on every request - and because the 16K-token Cobalt export sat after that turn, the visit's cache writes rose
-from 20,640 to 124,716 and its cost from $0.33 to $0.93.
+**Token accounting.** Lab 04 counts, with `count_tokens`, what the model reads of the status reminder on each turn of
+the Cobalt visit: turn-scoped delivery costs one copy per turn (55 tokens, 385 over the visit); persistent messages and
+kept injections accumulate (1,540 and 1,680 by the seventh turn); inject-then-delete reads one copy but rewrote the
+previous user turn on every request - and because the 16K-token Cobalt export sat after that turn, the visit's cache
+writes rose from 20,640 to 124,716 and its cost from $0.33 to $0.93.
 
 **Kestrel example.** At a hazardous-area site the harness sends, after every technician message and after every tool
 round, a turn-scoped status line: site, zone, certificate expiry, open work order. The one standing rule of the visit -
@@ -539,10 +549,10 @@ only as a backstop. Next-visit notes moved to a tiered memory with nightly conso
 customer-supplied notes. Log exports moved behind reader subagents with a contract. `max_tokens` went back to 16,000; a
 task budget per technician-day and per-message effort took over pacing.
 
-**The week the Opus 5.5 upgrade started dropping thinking blocks.** In September the team moved the agent to Claude
-Opus 5.5. The canary showed no errors - the account predates 2026-08-31, so the prefix check was recorded, not enforced -
-and the team had added the `thinking-binding-controls-2026-08-01` header with `prefix_mismatch_behavior: "drop_block"`
-to be safe. A week later long days were slower and used more output tokens, and `input_transformations` said why:
+**The week the Opus 5.5 upgrade started dropping thinking blocks.** In September the team moved the agent to Claude Opus
+5.5. The canary showed no errors - the account predates 2026-08-31, so the prefix check was recorded, not enforced - and
+the team had added the `thinking-binding-controls-2026-08-01` header with `prefix_mismatch_behavior: "drop_block"` to be
+safe. A week later long days were slower and used more output tokens, and `input_transformations` said why:
 `thinking_dropped` with `prefix_binding_mismatch` on nearly every request, because the clock in the system prompt and
 the deleted reminders invalidated every earlier thinking block and the model re-planned each turn from scratch; and
 `model_binding_mismatch` on the turns the overload fallback sent to Claude Opus 5, which cannot read Opus 5.5's blocks.
@@ -648,19 +658,10 @@ Compaction fired at turn 27: usage.iterations [('compaction', 58623, 541), ('mes
   heatsink   the controller log export only (turn 15)            yes   yes       -        -        -      -
   align      manual section (turn 2)                             yes   -         yes      -        yes    yes
 ```
-```
-  strategy    probes  report  notes  peak ctx  final ctx  history rewrites    side calls  total cost
-  ----------  ------  ------  -----  --------  ---------  ------------------  ----------  ----------
-  none        8/8     6/6     5/5      63,785     63,785                   0     $0.0000       $2.23
-  truncate    6/8     5/6     4/5      29,406     29,406  2 (blocks_removed)     $0.0000       $1.64
-  summary     7/8     6/6     5/5      21,390      6,394  0 + 5 resets           $0.1790       $1.46
-  compact     3/8     4/6     1/5      42,697      7,737                   0     $0.0000       $1.94
-  clear       7/8     6/6     5/5      23,565     11,069                   0     $0.0000       $2.12
-  scratchpad  7/8     6/6     5/5      21,529      6,575  0 + 5 resets           $0.1032       $1.39
-```
 
-The history-rewrite column is the bridge to lab 03: truncation rewrote the conversation twice mid-day, while the summary
-and scratchpad strategies started new conversations five times and replayed nothing old.
+The lab's closing table repeats section 3's numbers and adds the final context, the side calls' cost and the history
+rewrites - the bridge to lab 03: truncation rewrote the conversation twice mid-day, while the summary and scratchpad
+strategies started new conversations five times and replayed nothing old.
 
 ### Lab 03 - `03_preserved_thinking_binding.py`: what breaks binding
 
@@ -681,14 +682,6 @@ over a bad and an append-only harness. *Mock mode:*
   reorder the tools                   200  200 []                   200 []                   200 []            200 []
   append a system message             200  200 []                   200 []                   200 []            200 []
   change max_tokens and effort        200  200 []                   200 []                   200 []            200 []
-```
-```
-After trimming the tool result in messages.2, the response's input_transformations:
-  {type: thinking_dropped, path: messages.3.content.0, reason: prefix_binding_mismatch}
-  {type: thinking_dropped, path: messages.5.content.0, reason: prefix_binding_mismatch}
-  {type: thinking_dropped, path: messages.7.content.0, reason: prefix_binding_mismatch}
-  {type: thinking_dropped, path: messages.9.content.0, reason: prefix_binding_mismatch}
-  {type: thinking_dropped, path: messages.11.content.0, reason: prefix_binding_mismatch}
 ```
 ```
   conversation moved                                   result (beta header on)
@@ -722,8 +715,8 @@ In live mode your own account decides the Opus 5.5 column: accounts created on o
 ### Lab 04 - `04_turn_scoped_system_messages.py`: reminders that do not grow, break or leak
 
 `python advanced/day3_long_horizon_context/labs/04_turn_scoped_system_messages.py` hits the placement 400s, delivers the
-same status line four ways over the Cobalt visit while counting what the model reads, shows the tool-loop pitfall and the
-scope of persistent messages, and replays a deleted reminder on Fable 5.1. *Mock mode:*
+same status line four ways over the Cobalt visit while counting what the model reads, shows the tool-loop pitfall and
+the scope of persistent messages, and replays a deleted reminder on Fable 5.1. *Mock mode:*
 
 ```
   placement                                    result
@@ -773,10 +766,8 @@ same store behind a Managed Agents session. *Mock mode:*
 ```
   gbwd      memory_search() -> memory_write()                              Memory: active as E-1.
   harbor    memory_search() -> memory_write(confirms=S-1) + memory_write() Memory: confirmed as S-1; active as E-2.
-  riverbend memory_search() -> memory_write()                              Memory: active as E-3.
-  cedar     memory_search() -> memory_write()                              Memory: active as E-4.
-  cobalt    memory_search() -> memory_write()                              Memory: active as E-5.
-  harbor    memory_search() -> memory_write()                              Memory: active as E-6.
+```
+```
   riverbend memory_search() -> memory_write()                              Memory: not stored - personal data (phone number) - it stays in the CRM (PRV-004 §3).
   CRM sync, as received: {'status': 'rejected', 'reason': 'personal data (email address) - it stays in the CRM (PRV-004 §3)'}
   CRM sync, address redacted upstream: {'status': 'quarantined', 'id': 'E-7'}
@@ -833,8 +824,8 @@ the parallel fan-out also shortens the wait.
 ### Lab 07 - `07_cache_engineering_at_scale.py`: a fleet's cache
 
 `python advanced/day3_long_horizon_context/labs/07_cache_engineering_at_scale.py` measures a cold and a pre-warmed 07:00
-fan-out, the lookback boundary and its agent-loop form, two multi-tenant layouts, and per-model minimums, then prints the
-savings table. *Mock mode:*
+fan-out, the lookback boundary and its agent-loop form, two multi-tenant layouts, and per-model minimums, then prints
+the savings table. *Mock mode:*
 
 ```
   07:00, eight technicians  requests  requests that wrote  cache writes  cache reads  cost
@@ -864,13 +855,6 @@ savings table. *Mock mode:*
   tenant first                           18        24,978       49,956  $0.2731
   shared first                           18         6,648       68,286  $0.1545
 ```
-```
-  model             minimum cacheable  1st request wrote  2nd request read
-  ----------------  -----------------  -----------------  ----------------
-  claude-opus-5                   512                814               814
-  claude-sonnet-5               1,024                  0                 0
-  claude-haiku-4-5              4,096                  0                 0
-```
 
 The `[mock] cache.ready_delay` line in step 1 is the stand-in for real response latency; live, the cold fan-out's writes
 depend on how close together the requests really start.
@@ -896,8 +880,8 @@ depend on how close together the requests really start.
    reasoning is lost for that turn. Route fallbacks to a model that reads the producer's blocks, or accept the loss.
 8. A fact about this turn goes in a turn-scoped system message, re-sent after each tool round and never deleted; a rule
    that stays true goes in a persistent one, ended by another.
-9. Memory is a database with a write policy: tiers, atomic notes, reads before writes, consolidation in batch, systems of
-   record for events, provenance, and a quarantine - because memory is untrusted input.
+9. Memory is a database with a write policy: tiers, atomic notes, reads before writes, consolidation in batch, systems
+   of record for events, provenance, and a quarantine - because memory is untrusted input.
 10. Bulk reading belongs in isolated subagents that return a verified contract; keep a drill-down path for details the
     contract does not carry.
 11. At fleet scale caching is timing and layout: pre-warm before fan-outs, keep every request within 20 positions of the
@@ -910,13 +894,13 @@ depend on how close together the requests really start.
 * Preserved thinking - https://platform.claude.com/docs/en/build-with-claude/preserved-thinking
 * Mid-conversation system messages - https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
 * Effort - https://platform.claude.com/docs/en/build-with-claude/effort
-* Adaptive thinking - https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
-* Extended thinking (which models read which blocks) - https://platform.claude.com/docs/en/build-with-claude/extended-thinking
+* Adaptive thinking - https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking; extended thinking
+  (which models read which blocks) - https://platform.claude.com/docs/en/build-with-claude/extended-thinking
 * Prompt caching - https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 * Compaction - https://platform.claude.com/docs/en/build-with-claude/compaction and on-demand compaction -
   https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand
-* Context editing - https://platform.claude.com/docs/en/build-with-claude/context-editing
-* Context windows - https://platform.claude.com/docs/en/build-with-claude/context-windows
+* Context editing - https://platform.claude.com/docs/en/build-with-claude/context-editing; context windows -
+  https://platform.claude.com/docs/en/build-with-claude/context-windows
 * Token counting - https://platform.claude.com/docs/en/build-with-claude/token-counting
 * Structured outputs - https://platform.claude.com/docs/en/build-with-claude/structured-outputs
 * Memory tool - https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool

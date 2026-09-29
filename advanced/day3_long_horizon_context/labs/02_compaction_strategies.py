@@ -54,6 +54,7 @@ TITLES = {"none": "No context management (baseline)", "truncate": "Client-side t
           "scratchpad": "Structured state extraction (the agent's scratchpad)"}
 WINDOW = 30_000                 # truncation keeps the request under this many tokens
 COMPACT_TRIGGER = 50_000        # the documented minimum for compact_20260112
+CLEAR_BETA, COMPACT_BETA = "context-management-2025-06-27", "compact-2026-01-12"
 CLEAR_TRIGGER = 30_000
 KEEP_NOTE = ("Keep verbatim: every finding (site, unit, finding, action, parts), every 'remember for next time' note "
              "with its site, and every fact quoted from a manual with its citation. Drop raw readings and log exports.")
@@ -114,14 +115,14 @@ class Strategy:
         self.requests = 0
         if name == "clear":
             self.create = client.beta.messages.create
-            self.params.update(betas=["context-management-2025-06-27"], context_management={"edits": [{
+            self.params.update(betas=[CLEAR_BETA], context_management={"edits": [{
                 "type": "clear_tool_uses_20250919", "trigger": {"type": "input_tokens", "value": CLEAR_TRIGGER},
                 "keep": {"type": "tool_uses", "value": 3},                     # the current turn's calls
                 "clear_at_least": {"type": "input_tokens", "value": 10_000},   # each cache break must buy space
                 "exclude_tools": ["log_finding"]}]})                           # small, and the report needs them
         elif name == "compact":
             self.create = client.beta.messages.create
-            self.params.update(betas=["compact-2026-01-12"], context_management={"edits": [{
+            self.params.update(betas=[COMPACT_BETA], context_management={"edits": [{
                 "type": "compact_20260112", "trigger": {"type": "input_tokens", "value": COMPACT_TRIGGER},
                 "instructions": "Summarise the field-service session so far. " + KEEP_NOTE}]})
 

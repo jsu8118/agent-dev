@@ -42,6 +42,7 @@ from labkit import MODEL, get_client, header, is_mock, step, wrap  # noqa: E402
 import _day3 as d3  # noqa: E402
 
 CLEAR_AT = "mid-conversation-system-clear-at-2026-08-21"
+EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
 SYSTEM = [{"type": "text", "text": d3.FIELD_SYSTEM, "cache_control": {"type": "ephemeral"}}]
 VISIT = [s for s in d3.SCRIPT if 27 <= s.number <= 33]                  # the Cobalt Chemical visit
 STATUS = ("Status for this turn: site Cobalt Chemical, Zone 1 (ATEX) around CC-KP250X-02/-03 - safety faults are "
@@ -69,7 +70,7 @@ def placements(client) -> None:
             {"type": "text", "text": STATUS, "cache_control": {"type": "ephemeral"}}]}], MODEL, [CLEAR_AT]),
         ("clear_at: 'next_turn'", [user, reply, nxt, {**note, "clear_at": "next_turn"}], MODEL, [CLEAR_AT]),
         ("turn-scoped message with output_config", [user, reply, nxt, {**note, "output_config": {"effort": "low"}}],
-         MODEL, [CLEAR_AT, "mid-conversation-output-config-2026-07-01"]),
+         MODEL, [CLEAR_AT, EFFORT_BETA]),
         ("any system message on claude-sonnet-5", [user, reply, nxt, {"role": "system", "content": STATUS}],
          "claude-sonnet-5", []),
     ]
